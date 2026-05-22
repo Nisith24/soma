@@ -1,0 +1,6 @@
+{
+  "name": "Soma",
+  "description": "Comprehensive PGNeet MCQ preparation app featuring a modern interactive dashboard, topic-level analytics, and persistent practice tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

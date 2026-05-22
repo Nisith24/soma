@@ -1,0 +1,33 @@
+package com.example.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
+val SandalBackgroundLight = Color(0xFFFAF9F5)
+val SandalSurfaceLight = Color(0xFFFFFFFF)
+val SandalPrimaryLight = Color(0xFF8B6C5C) 
+val SandalOnPrimaryLight = Color(0xFFFFFFFF)
+val SandalPrimaryContainerLight = Color(0xFFF1E6DA)
+val SandalOnPrimaryContainerLight = Color(0xFF3E2D27)
+val SandalSecondaryLight = Color(0xFF6B7280)
+val SandalSecondaryContainerLight = Color(0xFFE5E7EB)
+val SandalOnSecondaryContainerLight = Color(0xFF1F2937)
+val SandalSurfaceVariantLight = Color(0xFFF4F0EA)
+val SandalOnSurfaceVariantLight = Color(0xFF5A534E)
+val SandalTextLight = Color(0xFF2C2825)
+val SandalErrorLight = Color(0xFFB3595C)
+val SandalErrorContainerLight = Color(0xFFF9DEDC)
+
+val SandalBackgroundDark = Color(0xFF1E1C1A)
+val SandalSurfaceDark = Color(0xFF262422)
+val SandalPrimaryDark = Color(0xFFD6BAAA)
+val SandalOnPrimaryDark = Color(0xFF3A2821)
+val SandalPrimaryContainerDark = Color(0xFF543E34)
+val SandalOnPrimaryContainerDark = Color(0xFFF1E6DA)
+val SandalSecondaryDark = Color(0xFFA1A1AA)
+val SandalSecondaryContainerDark = Color(0xFF374151)
+val SandalOnSecondaryContainerDark = Color(0xFFE5E7EB)
+val SandalSurfaceVariantDark = Color(0xFF383431)
+val SandalOnSurfaceVariantDark = Color(0xFFD3CBC5)
+val SandalTextDark = Color(0xFFE8E4E1)
+val SandalErrorDark = Color(0xFFD67D80)
+val SandalErrorContainerDark = Color(0xFF8C1D18)

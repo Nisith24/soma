@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "823802113339",
+    "project_id": "somapyq",
+    "storage_bucket": "somapyq.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:823802113339:android:471228a131f0f65a851b1e",
+        "android_client_info": {
+          "package_name": "soma.com"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "823802113339-407tmpfvlua37hdessm4r23ibhnnsr4r.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "soma.com",
+            "certificate_hash": "b0c75f3d246a10194d08ed138414a5922542eadf"
+          }
+        },
+        {
+          "client_id": "823802113339-v124su9537t83fe9voptv93lh3aqgdpr.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDv40KHiAZYhiRFfKJKdmJ6oJh4tIk6YQ4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "823802113339-v124su9537t83fe9voptv93lh3aqgdpr.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
