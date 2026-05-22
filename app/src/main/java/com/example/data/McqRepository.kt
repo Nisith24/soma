@@ -11,6 +11,7 @@ import com.example.local.toEntity
 import com.example.local.toField
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -18,6 +19,14 @@ class McqRepository(private val context: Context, private val db: AppDatabase) {
     private val prefs: SharedPreferences = context.getSharedPreferences("mcq_prefs", Context.MODE_PRIVATE)
     private val mcqDao = db.mcqDao()
     private val bookmarkDao = db.bookmarkDao()
+
+    suspend fun getAiExplanation(questionText: String): String? {
+        return db.aiExplanationDao().getAiExplanation(questionText)
+    }
+
+    suspend fun insertAiExplanation(entity: com.example.local.AiExplanationEntity) {
+        db.aiExplanationDao().insertAiExplanation(entity)
+    }
 
     fun getAllQuestions(): Flow<List<McqField>> {
         return mcqDao.getAllQuestions().map { entities -> entities.map { it.toField() } }
@@ -56,7 +65,9 @@ class McqRepository(private val context: Context, private val db: AppDatabase) {
     }
 
     fun saveProfile(name: String, email: String) {
-        prefs.edit().putString("display_name", name).putString("email", email).apply()
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            prefs.edit().putString("display_name", name).putString("email", email).commit()
+        }
     }
 
     fun saveDailyGoal(goal: Int) {

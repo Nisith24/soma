@@ -59,7 +59,6 @@ data class AppNotification(
 )
 
 sealed class McqUiState {
-    data object Empty : McqUiState()
     data object Loading : McqUiState()
     data class Success(val questions: List<McqField>) : McqUiState()
     data class Error(val message: String) : McqUiState()

@@ -50,7 +50,7 @@ interface McqDao {
     @Query("SELECT * FROM mcq_questions ORDER BY id DESC")
     fun getAllQuestions(): Flow<List<McqEntity>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(questions: List<McqEntity>)
 
     @Query("DELETE FROM mcq_questions")
@@ -77,7 +77,7 @@ interface AiExplanationDao {
     @Query("SELECT aiExplanation FROM ai_explanations WHERE question = :question")
     suspend fun getAiExplanation(question: String): String?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAiExplanation(explanation: AiExplanationEntity)
 }
 

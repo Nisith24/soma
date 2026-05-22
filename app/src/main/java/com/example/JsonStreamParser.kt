@@ -88,6 +88,7 @@ object JsonStreamParser {
 
         var base64Content = data
         var ext = "bin"
+        var isDataUri = false
         if (data.startsWith("data:")) {
             val commaIndex = data.indexOf(',')
             if (commaIndex > -1) {
@@ -101,22 +102,30 @@ object JsonStreamParser {
                 else if (header.contains("audio/wav")) ext = "wav"
                 
                 base64Content = data.substring(commaIndex + 1)
+                isDataUri = true
             }
-        } else {
-            if (base64Content.length < 100) return data
         }
 
-        try {
-            val decodedBytes = android.util.Base64.decode(base64Content, android.util.Base64.DEFAULT)
-            if (decodedBytes.isNotEmpty()) {
-                if (!mediaDir.exists()) mediaDir.mkdirs()
-                val fileName = "media_${java.util.UUID.randomUUID()}.$ext"
-                val file = java.io.File(mediaDir, fileName)
-                file.writeBytes(decodedBytes)
-                return "file://${file.absolutePath}"
+        if (!isDataUri && base64Content.length < 100) {
+            return data
+        }
+
+        val sanitized = base64Content.replace(Regex("\\s+"), "")
+        val looksLikeBase64 = sanitized.isNotEmpty() && sanitized.length % 4 == 0 && sanitized.matches(Regex("^[A-Za-z0-9+/]+={0,2}$"))
+
+        if (isDataUri || looksLikeBase64) {
+            try {
+                val decodedBytes = android.util.Base64.decode(base64Content, android.util.Base64.DEFAULT)
+                if (decodedBytes.isNotEmpty()) {
+                    if (!mediaDir.exists()) mediaDir.mkdirs()
+                    val fileName = "media_${java.util.UUID.randomUUID()}.$ext"
+                    val file = java.io.File(mediaDir, fileName)
+                    file.writeBytes(decodedBytes)
+                    return "file://${file.absolutePath}"
+                }
+            } catch (e: Exception) {
+                // Not a valid base64
             }
-        } catch (e: Exception) {
-            // Not a valid base64
         }
         return data
     }
@@ -128,29 +137,37 @@ object JsonStreamParser {
         }
 
         var base64Content = data
+        var isDataUri = false
         if (data.startsWith("data:")) {
             val commaIndex = data.indexOf(',')
             if (commaIndex > -1) {
                 base64Content = data.substring(commaIndex + 1)
+                isDataUri = true
             }
         }
 
-        try {
-            val decodedBytes = android.util.Base64.decode(base64Content, android.util.Base64.DEFAULT)
-            if (decodedBytes.isNotEmpty()) {
-                val decodedString = String(decodedBytes, kotlin.text.Charsets.UTF_8)
-                var controlCharsCount = 0
-                for (char in decodedString) {
-                    if (char.code < 32 && char != '\n' && char != '\r' && char != '\t') {
-                        controlCharsCount++
+        // Only attempt base64 decode if it's a data URI or it strictly looks like base64
+        val sanitized = base64Content.replace(Regex("\\s+"), "")
+        val looksLikeBase64 = sanitized.isNotEmpty() && sanitized.length % 4 == 0 && sanitized.matches(Regex("^[A-Za-z0-9+/]+={0,2}$"))
+
+        if (isDataUri || looksLikeBase64) {
+            try {
+                val decodedBytes = android.util.Base64.decode(base64Content, android.util.Base64.DEFAULT)
+                if (decodedBytes.isNotEmpty()) {
+                    val decodedString = String(decodedBytes, kotlin.text.Charsets.UTF_8)
+                    var controlCharsCount = 0
+                    for (char in decodedString) {
+                        if (char.code < 32 && char != '\n' && char != '\r' && char != '\t') {
+                            controlCharsCount++
+                        }
+                    }
+                    if (controlCharsCount * 10 < decodedString.length) {
+                        return decodedString
                     }
                 }
-                if (controlCharsCount * 10 < decodedString.length) {
-                    return decodedString
-                }
+            } catch (e: Exception) {
+                // Decodes failed or non-base64 text
             }
-        } catch (e: Exception) {
-            // Decodes failed or non-base64 text
         }
         return data
     }

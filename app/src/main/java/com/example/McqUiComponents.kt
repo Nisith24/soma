@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -260,8 +262,10 @@ fun McqDashboard(
     var showCustomModulesDialog by remember { mutableStateOf(false) }
     var expandedFolders by remember { mutableStateOf(setOf<String>()) }
 
-    val groupedSubjects = remember(summary, dashboardSearchQuery) {
-        groupSubjects(summary, dashboardSearchQuery)
+    val groupedSubjects by produceState(initialValue = emptyList<GroupedSubject>(), summary, dashboardSearchQuery) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            groupSubjects(summary, dashboardSearchQuery)
+        }
     }
 
     val effectivelyExpandedFolders = remember(expandedFolders, dashboardSearchQuery, groupedSubjects) {
@@ -296,7 +300,8 @@ fun McqDashboard(
     LazyColumn(
         modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
         contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         if (summary.isNotEmpty()) {
             item {
@@ -305,11 +310,41 @@ fun McqDashboard(
                     onClick = { showCustomModulesDialog = true }
                 )
             }
+        } else {
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CloudUpload,
+                        contentDescription = "Upload",
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "No Questions Found",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Go to Profile > Database to upload your question bank JSON files.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
         }
 
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+        if (summary.isNotEmpty()) {
+            item {
+                Row(
+                modifier = Modifier.fillMaxWidth().widthIn(max = 600.dp).padding(bottom = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -395,6 +430,7 @@ fun McqDashboard(
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .widthIn(max = 600.dp)
                             .clickable { onSourceSelected(sourceName) },
                         colors = CardDefaults.cardColors(
                             containerColor = if (isLegacy) {
@@ -503,6 +539,7 @@ fun McqDashboard(
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .widthIn(max = 600.dp)
                                 .clickable {
                                     if (dashboardSearchQuery.isBlank()) {
                                         expandedFolders = if (isExpanded) {
@@ -689,7 +726,8 @@ fun McqDashboard(
                 }
             }
         }
-}
+        }
+    }
 
     if (showCustomModulesDialog) {
         CustomModulesSelectionDialog(
@@ -1283,10 +1321,27 @@ fun McqQuizMode(
     timeLimitMinutes: Int = 0,
     modifier: Modifier = Modifier
 ) {
+    var offsetX by remember { mutableStateOf(0f) }
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragEnd = {
+                        if (offsetX > 150f && index > 0) {
+                            onPrev()
+                        } else if (offsetX < -150f && index < total - 1) {
+                            onNext()
+                        }
+                        offsetX = 0f
+                    },
+                    onHorizontalDrag = { change, dragAmount ->
+                        change.consume()
+                        offsetX += dragAmount
+                    }
+                )
+            }
     ) {
         // Animated progress indicator at the top
         val progress by animateFloatAsState(
@@ -2205,6 +2260,7 @@ fun CustomModulesCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .widthIn(max = 600.dp)
             .clickable { onClick() },
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)

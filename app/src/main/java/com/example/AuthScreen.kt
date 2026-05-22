@@ -1,3 +1,4 @@
+@file:Suppress("DEPRECATION")
 package com.example
 
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -18,6 +19,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,7 +49,7 @@ fun AuthScreen(
     viewModel: McqViewModel,
     onLoginSuccess: () -> Unit
 ) {
-    val appState by viewModel.state.collectAsState()
+    val appState by viewModel.state.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
     val context = LocalContext.current
 

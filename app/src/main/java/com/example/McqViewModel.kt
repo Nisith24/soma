@@ -23,7 +23,7 @@ import com.google.firebase.auth.UserProfileChangeRequest
 val jsonParser = Json { ignoreUnknownKeys = true; isLenient = true; coerceInputValues = true }
 
 data class AppState(
-    val uiState: McqUiState = McqUiState.Empty,
+    val uiState: McqUiState = McqUiState.Success(emptyList()),
     val searchQuery: String = "",
     val viewMode: String = "quiz",
     val quizIndex: Int = 0,
@@ -79,7 +79,7 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(AppState())
     val state: StateFlow<AppState> = _state.asStateFlow()
 
-    private var firebaseAuth: com.google.firebase.auth.FirebaseAuth? = null
+    private var firebaseAuth: FirebaseAuth? = null
 
     init {
         loadProfile()
@@ -89,7 +89,7 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun getAiExplanation(questionText: String, options: List<String>, correctAnswer: String, topic: String?, subject: String?, existingExplanation: String?): String {
         // Try DB first
-        val cached = db.aiExplanationDao().getAiExplanation(questionText)
+        val cached = repository.getAiExplanation(questionText)
         if (cached != null) return cached
 
         // Call Gemini
@@ -97,7 +97,7 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
         
         // Cache if successful
         if (!generated.startsWith("Error") && !generated.startsWith("API Key")) {
-            db.aiExplanationDao().insertAiExplanation(com.example.local.AiExplanationEntity(questionText, generated))
+            repository.insertAiExplanation(com.example.local.AiExplanationEntity(questionText, generated))
         }
         return generated
     }
@@ -107,10 +107,10 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
             var initialized = false
             try {
                 // Attempt standard initialization with compiled resources from google-services.json
-                com.google.firebase.FirebaseApp.initializeApp(getApplication())
+                FirebaseApp.initializeApp(getApplication())
                 initialized = true
                 android.util.Log.d("Firebase", "Successfully initialized Firebase natively using google-services.json")
-            } catch (e: Throwable) {
+            } catch (e: Exception) {
                 android.util.Log.d("Firebase", "Native initialization failed, trying programmatic fallback: ${e.localizedMessage}")
             }
 
@@ -123,24 +123,24 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
                     projectId.isNotBlank() && !projectId.contains("PLACEHOLDER") &&
                     appId.isNotBlank() && !appId.contains("PLACEHOLDER")) {
                     
-                    val options = com.google.firebase.FirebaseOptions.Builder()
+                    val options = FirebaseOptions.Builder()
                         .setApiKey(apiKey)
                         .setProjectId(projectId)
                         .setApplicationId(appId)
                         .build()
                     
                     try {
-                        com.google.firebase.FirebaseApp.initializeApp(getApplication(), options)
+                        FirebaseApp.initializeApp(getApplication(), options)
                         initialized = true
                         android.util.Log.d("Firebase", "Successfully initialized Firebase programmatically using BuildConfig")
-                    } catch (e: Throwable) {
+                    } catch (e: Exception) {
                         android.util.Log.e("Firebase", "Programmatic fallback initialization failed", e)
                     }
                 }
             }
 
             if (initialized) {
-                firebaseAuth = com.google.firebase.auth.FirebaseAuth.getInstance()
+                firebaseAuth = FirebaseAuth.getInstance()
                 val currentUser = firebaseAuth?.currentUser
                 
                 _state.update {
@@ -184,15 +184,11 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun getTodayDateString(): String {
-        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
-        return sdf.format(java.util.Date())
+        return java.time.LocalDate.now().toString()
     }
 
     private fun getYesterdayDateString(): String {
-        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
-        val cal = java.util.Calendar.getInstance()
-        cal.add(java.util.Calendar.DATE, -1)
-        return sdf.format(cal.time)
+        return java.time.LocalDate.now().minusDays(1).toString()
     }
 
     private fun loadProfile() {
@@ -233,12 +229,11 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun observeData() {
         viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                repository.deleteQuestionsBySource(null)
+            }
             repository.getAllQuestions().collect { fields ->
-                if (fields.isEmpty()) {
-                    repository.insertQuestions(getDefaultMockQuestions())
-                } else {
-                    processQuestions(fields)
-                }
+                processQuestions(fields)
             }
         }
 
@@ -268,7 +263,7 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
                 allQuestions = fields,
                 categorySummary = categorySummary,
                 sourceSummary = sourceSummary,
-                uiState = if (fields.isEmpty()) McqUiState.Empty else McqUiState.Success(fields)
+                uiState = McqUiState.Success(fields)
             )
         }
         rebuildNotifications()
@@ -485,13 +480,13 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
             if (auth != null && state.value.isFirebaseEnabled) {
                 val user = auth.currentUser
                 if (user != null) {
-                    val profileUpdates = com.google.firebase.auth.UserProfileChangeRequest.Builder()
+                    val profileUpdates = UserProfileChangeRequest.Builder()
                         .setDisplayName(name)
                         .build()
                     user.updateProfile(profileUpdates)
                     if (email != user.email && email.isNotBlank()) {
                         try {
-                            user.updateEmail(email)
+                            user.verifyBeforeUpdateEmail(email)
                         } catch (e: Throwable) {
                             android.util.Log.e("FirebaseProfile", "Failed to update email synchronously", e)
                         }
@@ -548,7 +543,7 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
             .addOnCompleteListener { task ->
                 if (task.isSuccessful) {
                     val user = task.result?.user
-                    val profileUpdates = com.google.firebase.auth.UserProfileChangeRequest.Builder()
+                    val profileUpdates = UserProfileChangeRequest.Builder()
                         .setDisplayName(nameInput)
                         .build()
                     user?.updateProfile(profileUpdates)?.addOnCompleteListener { profileTask ->
@@ -659,7 +654,7 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
 
         _state.update { it.copy(isAuthLoading = true, authErrorMessage = null) }
         try {
-            val credential = com.google.firebase.auth.GoogleAuthProvider.getCredential(idTokenInput, null)
+            val credential = GoogleAuthProvider.getCredential(idTokenInput, null)
             auth.signInWithCredential(credential)
                 .addOnCompleteListener { task ->
                     if (task.isSuccessful) {
@@ -921,11 +916,12 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(uiState = McqUiState.Loading) }
         viewModelScope.launch {
             try {
-                val stream = java.io.ByteArrayInputStream(jsonString.toByteArray(Charsets.UTF_8))
-                val allFields = withContext(Dispatchers.IO) {
-                    JsonStreamParser.parseMultiple(listOf((sourceName ?: "Imported") to stream))
+                java.io.ByteArrayInputStream(jsonString.toByteArray(Charsets.UTF_8)).use { stream ->
+                    val allFields = withContext(Dispatchers.IO) {
+                        JsonStreamParser.parseMultiple(listOf((sourceName ?: "Imported") to stream))
+                    }
+                    repository.insertQuestions(allFields)
                 }
-                repository.insertQuestions(allFields)
             } catch (e: Exception) {
                 _state.update { it.copy(uiState = McqUiState.Error("Import fail: ${e.localizedMessage}")) }
             }
@@ -1083,10 +1079,7 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
 
             _state.update { 
                 it.copy(
-                    uiState = if (finalFiltered.isEmpty() && current.allQuestions.isNotEmpty() && current.searchQuery.isNotBlank()) 
-                        McqUiState.Success(emptyList()) 
-                        else if (current.allQuestions.isEmpty()) McqUiState.Empty 
-                        else McqUiState.Success(finalFiltered),
+                    uiState = McqUiState.Success(finalFiltered),
                     categorySummary = catSum,
                     sourceSummary = srcSum,
                     quizIndex = 0

@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -35,7 +36,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val viewModel: McqViewModel = viewModel()
-            val appState by viewModel.state.collectAsState()
+            val appState by viewModel.state.collectAsStateWithLifecycle()
             val isDark = when (appState.customTheme) {
                 AppThemeMode.LIGHT -> false
                 AppThemeMode.DARK -> true
@@ -52,7 +53,7 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun McqViewerApp(viewModel: McqViewModel) {
-    val appState by viewModel.state.collectAsState()
+    val appState by viewModel.state.collectAsStateWithLifecycle()
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -188,7 +189,6 @@ fun HomeScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         when (val state = appState.uiState) {
-            is McqUiState.Empty -> EmptyState(onImport)
             is McqUiState.Loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             is McqUiState.Success -> {
                 if (appState.selectedSubject == null && appState.selectedSource == null && appState.searchQuery.isBlank() && appState.customModules.isEmpty()) {
@@ -235,9 +235,7 @@ fun HomeScreen(
         }
         
         if (appState.pendingTopicForDialog != null) {
-            val maxQ = try {
-                appState.categorySummary[appState.selectedSubject]?.get(appState.pendingTopicForDialog)?.total ?: 50
-            } catch (e: Exception) { 50 }
+            val maxQ = appState.categorySummary[appState.selectedSubject]?.get(appState.pendingTopicForDialog)?.total ?: 50
             
             ModeSelectionDialog(
                 topic = appState.pendingTopicForDialog,
@@ -294,16 +292,7 @@ fun QuizOrListContent(viewModel: McqViewModel, appState: AppState, questions: Li
     }
 }
 
-@Composable
-fun EmptyState(onImport: () -> Unit) {
-    Column(Modifier.fillMaxSize(), Arrangement.Center, Alignment.CenterHorizontally) {
-        Text("Welcome to Soma", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(8.dp))
-        Text("Upload JSON to start")
-        Spacer(Modifier.height(24.dp))
-        Button(onClick = onImport) { Text("Select File") }
-    }
-}
+
 
 @Composable
 fun ErrorState(message: String) {
@@ -311,17 +300,4 @@ fun ErrorState(message: String) {
         Text("Error", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
         Text(message)
     }
-}
-
-private fun getFileName(context: Context, uri: Uri): String? {
-    var result: String? = null
-    if (uri.scheme == "content") {
-        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                if (index >= 0) result = cursor.getString(index)
-            }
-        }
-    }
-    return result ?: uri.path?.substringAfterLast('/')
 }
