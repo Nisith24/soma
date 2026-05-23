@@ -20,14 +20,6 @@ class McqRepository(private val context: Context, private val db: AppDatabase) {
     private val mcqDao = db.mcqDao()
     private val bookmarkDao = db.bookmarkDao()
 
-    suspend fun getAiExplanation(questionText: String): String? {
-        return db.aiExplanationDao().getAiExplanation(questionText)
-    }
-
-    suspend fun insertAiExplanation(entity: com.example.local.AiExplanationEntity) {
-        db.aiExplanationDao().insertAiExplanation(entity)
-    }
-
     fun getAllQuestions(): Flow<List<McqField>> {
         return mcqDao.getAllQuestions().map { entities -> entities.map { it.toField() } }
     }
@@ -53,6 +45,13 @@ class McqRepository(private val context: Context, private val db: AppDatabase) {
             bookmarkDao.deleteBookmark(question.question)
         } else {
             bookmarkDao.insertBookmark(question.toBookmarkEntity())
+        }
+    }
+
+    suspend fun updateAiExplanation(question: String, aiExplanation: String, isBookmarked: Boolean) {
+        mcqDao.updateAiExplanation(question, aiExplanation)
+        if (isBookmarked) {
+            bookmarkDao.updateAiExplanation(question, aiExplanation)
         }
     }
 
@@ -101,6 +100,16 @@ class McqRepository(private val context: Context, private val db: AppDatabase) {
     fun getLastAnsweredDate(): String = prefs.getString("last_answered_date", "") ?: ""
     fun saveLastAnsweredDate(dateStr: String) {
         prefs.edit().putString("last_answered_date", dateStr).apply()
+    }
+
+    fun getGeminiApiKey(): String = prefs.getString("gemini_api_key", "MY_GEMINI_API_KEY") ?: "MY_GEMINI_API_KEY"
+    fun saveGeminiApiKey(key: String) {
+        prefs.edit().putString("gemini_api_key", key).apply()
+    }
+
+    fun getGeminiVoice(): String = prefs.getString("gemini_voice", "Kore") ?: "Kore"
+    fun saveGeminiVoice(voice: String) {
+        prefs.edit().putString("gemini_voice", voice).apply()
     }
 
     fun getSavedOptions(): Map<String, String> {

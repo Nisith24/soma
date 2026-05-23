@@ -110,63 +110,37 @@ object JsonStreamParser {
             return data
         }
 
-        val sanitized = base64Content.replace(Regex("\\s+"), "")
-        val looksLikeBase64 = sanitized.isNotEmpty() && sanitized.length % 4 == 0 && sanitized.matches(Regex("^[A-Za-z0-9+/]+={0,2}$"))
-
-        if (isDataUri || looksLikeBase64) {
-            try {
-                val decodedBytes = android.util.Base64.decode(base64Content, android.util.Base64.DEFAULT)
-                if (decodedBytes.isNotEmpty()) {
-                    if (!mediaDir.exists()) mediaDir.mkdirs()
-                    val fileName = "media_${java.util.UUID.randomUUID()}.$ext"
-                    val file = java.io.File(mediaDir, fileName)
-                    file.writeBytes(decodedBytes)
-                    return "file://${file.absolutePath}"
-                }
-            } catch (e: Exception) {
-                // Not a valid base64
+        try {
+            val decodedBytes = android.util.Base64.decode(base64Content, android.util.Base64.DEFAULT)
+            if (decodedBytes.isNotEmpty()) {
+                if (!mediaDir.exists()) mediaDir.mkdirs()
+                val fileName = "media_${java.util.UUID.randomUUID()}.$ext"
+                val file = java.io.File(mediaDir, fileName)
+                file.writeBytes(decodedBytes)
+                return "file://${file.absolutePath}"
             }
+        } catch (e: Exception) {
+            // Not a valid base64
         }
+        
         return data
     }
 
     private fun decodeExplanationIfBase64(data: String): String {
-        if (data.isBlank()) return data
-        if (data.startsWith("http://") || data.startsWith("https://") || data.startsWith("file://")) {
+        if (data.isBlank() || !data.trim().startsWith("data:")) {
             return data
         }
 
-        var base64Content = data
-        var isDataUri = false
-        if (data.startsWith("data:")) {
-            val commaIndex = data.indexOf(',')
-            if (commaIndex > -1) {
-                base64Content = data.substring(commaIndex + 1)
-                isDataUri = true
-            }
-        }
-
-        // Only attempt base64 decode if it's a data URI or it strictly looks like base64
-        val sanitized = base64Content.replace(Regex("\\s+"), "")
-        val looksLikeBase64 = sanitized.isNotEmpty() && sanitized.length % 4 == 0 && sanitized.matches(Regex("^[A-Za-z0-9+/]+={0,2}$"))
-
-        if (isDataUri || looksLikeBase64) {
+        val commaIndex = data.indexOf(',')
+        if (commaIndex > -1) {
+            val base64Content = data.substring(commaIndex + 1)
             try {
                 val decodedBytes = android.util.Base64.decode(base64Content, android.util.Base64.DEFAULT)
                 if (decodedBytes.isNotEmpty()) {
-                    val decodedString = String(decodedBytes, kotlin.text.Charsets.UTF_8)
-                    var controlCharsCount = 0
-                    for (char in decodedString) {
-                        if (char.code < 32 && char != '\n' && char != '\r' && char != '\t') {
-                            controlCharsCount++
-                        }
-                    }
-                    if (controlCharsCount * 10 < decodedString.length) {
-                        return decodedString
-                    }
+                    return String(decodedBytes, kotlin.text.Charsets.UTF_8)
                 }
             } catch (e: Exception) {
-                // Decodes failed or non-base64 text
+                // Invalid base64
             }
         }
         return data
@@ -196,8 +170,62 @@ object JsonStreamParser {
                         "correct_answer" -> field.correctAnswer = safeNextString(reader)
                         "explanation" -> field.explanation = decodeExplanationIfBase64(safeNextString(reader))
                         "source_url" -> field.sourceUrl = safeNextString(reader)
-                        "images" -> field.images = saveMediaIfBase64(safeNextString(reader), mediaDir)
-                        "audio" -> field.audio = saveMediaIfBase64(safeNextString(reader), mediaDir)
+                        "images" -> {
+                            when (token) {
+                                JsonToken.BEGIN_ARRAY -> {
+                                    val imagesList = mutableListOf<String>()
+                                    reader.beginArray()
+                                    while (reader.hasNext()) {
+                                        val imgType = reader.peek()
+                                        if (imgType == JsonToken.STRING || imgType == JsonToken.NUMBER) {
+                                            val imgData = reader.nextString()
+                                            if (imgData.isNotBlank()) {
+                                                imagesList.add(saveMediaIfBase64(imgData, mediaDir))
+                                            }
+                                        } else {
+                                            reader.skipValue()
+                                        }
+                                    }
+                                    reader.endArray()
+                                    if (imagesList.isNotEmpty()) {
+                                        field.images = imagesList.joinToString(",")
+                                    }
+                                }
+                                JsonToken.STRING, JsonToken.NUMBER -> {
+                                    val imgData = reader.nextString()
+                                    if (imgData.isNotBlank()) field.images = saveMediaIfBase64(imgData, mediaDir)
+                                }
+                                else -> reader.skipValue()
+                            }
+                        }
+                        "audio" -> {
+                            when (token) {
+                                JsonToken.BEGIN_ARRAY -> {
+                                    val audioList = mutableListOf<String>()
+                                    reader.beginArray()
+                                    while (reader.hasNext()) {
+                                        val audType = reader.peek()
+                                        if (audType == JsonToken.STRING || audType == JsonToken.NUMBER) {
+                                            val audData = reader.nextString()
+                                            if (audData.isNotBlank()) {
+                                                audioList.add(saveMediaIfBase64(audData, mediaDir))
+                                            }
+                                        } else {
+                                            reader.skipValue()
+                                        }
+                                    }
+                                    reader.endArray()
+                                    if (audioList.isNotEmpty()) {
+                                        field.audio = audioList.joinToString(",")
+                                    }
+                                }
+                                JsonToken.STRING, JsonToken.NUMBER -> {
+                                    val audData = reader.nextString()
+                                    if (audData.isNotBlank()) field.audio = saveMediaIfBase64(audData, mediaDir)
+                                }
+                                else -> reader.skipValue()
+                            }
+                        }
                         "options" -> {
                             if (token == JsonToken.BEGIN_ARRAY) {
                                 val opts = mutableListOf<String>()

@@ -23,7 +23,7 @@ import com.google.firebase.auth.UserProfileChangeRequest
 val jsonParser = Json { ignoreUnknownKeys = true; isLenient = true; coerceInputValues = true }
 
 data class AppState(
-    val uiState: McqUiState = McqUiState.Success(emptyList()),
+    val uiState: McqUiState = McqUiState.Loading,
     val searchQuery: String = "",
     val viewMode: String = "quiz",
     val quizIndex: Int = 0,
@@ -44,6 +44,8 @@ data class AppState(
     val isSearchVisible: Boolean = false,
     val dashboardSearchQuery: String = "",
     val isDashboardSearchVisible: Boolean = false,
+    val geminiApiKey: String = "",
+    val geminiVoice: String = "Kore",
     val isLoggedIn: Boolean = false,
     val isFirebaseEnabled: Boolean = false,
     val isAuthLoading: Boolean = false,
@@ -52,6 +54,8 @@ data class AppState(
     val email: String = "nisithpraveen@gmail.com",
     val dailyGoal: Int = 10,
     val customTheme: AppThemeMode = AppThemeMode.LIGHT,
+    val ttsPitch: Float = 1.0f,
+    val ttsSpeed: Float = 0.9f,
     val notifications: List<AppNotification> = emptyList(),
     val dismissedNotificationIds: Set<String> = emptySet(),
     val streakCount: Int = 0,
@@ -85,21 +89,6 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
         loadProfile()
         observeData()
         initFirebase()
-    }
-
-    suspend fun getAiExplanation(questionText: String, options: List<String>, correctAnswer: String, topic: String?, subject: String?, existingExplanation: String?): String {
-        // Try DB first
-        val cached = repository.getAiExplanation(questionText)
-        if (cached != null) return cached
-
-        // Call Gemini
-        val generated = com.example.gemini.fetchMedicalExplanation(questionText, options, correctAnswer, topic, subject, existingExplanation)
-        
-        // Cache if successful
-        if (!generated.startsWith("Error") && !generated.startsWith("API Key")) {
-            repository.insertAiExplanation(com.example.local.AiExplanationEntity(questionText, generated))
-        }
-        return generated
     }
 
     private fun initFirebase() {
@@ -221,7 +210,9 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
                 streakCount = currentStreak,
                 answersToday = currentAnswers,
                 lastActiveTime = if (lastActive == 0L) System.currentTimeMillis() else lastActive,
-                selectedOptions = savedOptions
+                selectedOptions = savedOptions,
+                geminiApiKey = repository.getGeminiApiKey(),
+                geminiVoice = repository.getGeminiVoice()
             )
         }
         rebuildNotifications()
@@ -471,6 +462,10 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
         rebuildNotifications()
     }
 
+    fun updateTtsSettings(pitch: Float, speed: Float) {
+        _state.update { it.copy(ttsPitch = pitch, ttsSpeed = speed) }
+    }
+
     fun updateProfile(name: String, email: String) {
         repository.saveProfile(name, email)
         _state.update { it.copy(displayName = name, email = email) }
@@ -503,6 +498,16 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
         repository.saveDailyGoal(goal)
         _state.update { it.copy(dailyGoal = goal) }
         rebuildNotifications()
+    }
+
+    fun setGeminiApiKey(key: String) {
+        repository.saveGeminiApiKey(key)
+        _state.update { it.copy(geminiApiKey = key) }
+    }
+
+    fun setGeminiVoice(voice: String) {
+        repository.saveGeminiVoice(voice)
+        _state.update { it.copy(geminiVoice = voice) }
     }
 
     fun setThemeMode(theme: AppThemeMode) {
@@ -764,6 +769,24 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val isBookmarked = _state.value.bookmarkedQuestionTexts.contains(question.question)
             repository.toggleBookmark(question, isBookmarked)
+        }
+    }
+
+    private val aiExplanationService = AiExplanationService()
+    
+    fun generateAndSaveExplanation(question: McqField, onLoading: (Boolean) -> Unit, onComplete: (String?) -> Unit) {
+        viewModelScope.launch {
+            onLoading(true)
+            val generatedExp = aiExplanationService.generateExplanation(question.question, question.options, question.correct_answer, _state.value.geminiApiKey)
+            if (generatedExp != null) {
+                // Save it to persistent local storage so next time it is available instantly
+                val isBookmarked = _state.value.bookmarkedQuestionTexts.contains(question.question)
+                repository.updateAiExplanation(question.question, generatedExp, isBookmarked)
+                onComplete(generatedExp)
+            } else {
+                onComplete(null)
+            }
+            onLoading(false)
         }
     }
 

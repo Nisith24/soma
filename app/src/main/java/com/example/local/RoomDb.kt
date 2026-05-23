@@ -24,6 +24,7 @@ data class McqEntity(
     val options: List<String>,
     val correctAnswer: String,
     val explanation: String?,
+    val aiExplanation: String?,
     val images: String?,
     val audio: String?,
     val sourceUrl: String?
@@ -64,29 +65,16 @@ interface McqDao {
 
     @Query("DELETE FROM mcq_questions WHERE sourceUrl IS NULL OR sourceUrl = ''")
     suspend fun deleteNullSource()
+
+    @Query("UPDATE mcq_questions SET aiExplanation = :aiExplanation WHERE question = :question")
+    suspend fun updateAiExplanation(question: String, aiExplanation: String)
 }
 
-@Entity(tableName = "ai_explanations")
-data class AiExplanationEntity(
-    @PrimaryKey val question: String,
-    val aiExplanation: String
-)
-
-@Dao
-interface AiExplanationDao {
-    @Query("SELECT aiExplanation FROM ai_explanations WHERE question = :question")
-    suspend fun getAiExplanation(question: String): String?
-
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertAiExplanation(explanation: AiExplanationEntity)
-}
-
-@Database(entities = [McqEntity::class, BookmarkEntity::class, AiExplanationEntity::class], version = 3, exportSchema = false)
+@Database(entities = [McqEntity::class, BookmarkEntity::class], version = 5, exportSchema = false)
 @TypeConverters(McqTypeConverters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun mcqDao(): McqDao
     abstract fun bookmarkDao(): BookmarkDao
-    abstract fun aiExplanationDao(): AiExplanationDao
 }
 
 @Entity(tableName = "bookmarks")
@@ -97,6 +85,7 @@ data class BookmarkEntity(
     val options: List<String>,
     val correctAnswer: String,
     val explanation: String?,
+    val aiExplanation: String?,
     val images: String?,
     val audio: String?,
     val sourceUrl: String?,
@@ -116,6 +105,9 @@ interface BookmarkDao {
 
     @Query("SELECT EXISTS(SELECT 1 FROM bookmarks WHERE question = :question)")
     fun isBookmarked(question: String): Flow<Boolean>
+
+    @Query("UPDATE bookmarks SET aiExplanation = :aiExplanation WHERE question = :question")
+    suspend fun updateAiExplanation(question: String, aiExplanation: String)
 }
 
 fun McqField.toEntity(): McqEntity {
@@ -126,6 +118,7 @@ fun McqField.toEntity(): McqEntity {
         options = this.options,
         correctAnswer = this.correct_answer,
         explanation = this.explanation,
+        aiExplanation = this.ai_explanation,
         images = this.images,
         audio = this.audio,
         sourceUrl = this.source_url
@@ -140,6 +133,7 @@ fun McqField.toBookmarkEntity(): BookmarkEntity {
         options = this.options,
         correctAnswer = this.correct_answer,
         explanation = this.explanation,
+        aiExplanation = this.ai_explanation,
         images = this.images,
         audio = this.audio,
         sourceUrl = this.source_url
@@ -154,6 +148,7 @@ fun McqEntity.toField(): McqField {
         options = this.options,
         correct_answer = this.correctAnswer,
         explanation = this.explanation,
+        ai_explanation = this.aiExplanation,
         images = this.images,
         audio = this.audio,
         source_url = this.sourceUrl
@@ -168,6 +163,7 @@ fun BookmarkEntity.toField(): McqField {
         options = this.options,
         correct_answer = this.correctAnswer,
         explanation = this.explanation,
+        ai_explanation = this.aiExplanation,
         images = this.images,
         audio = this.audio,
         source_url = this.sourceUrl

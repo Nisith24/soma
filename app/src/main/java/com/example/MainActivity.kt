@@ -1,15 +1,10 @@
 package com.example
 
-import android.content.Context
-import android.net.Uri
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -18,7 +13,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
@@ -26,9 +20,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.ui.theme.MyApplicationTheme
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,7 +35,14 @@ class MainActivity : ComponentActivity() {
             }
 
             MyApplicationTheme(darkTheme = isDark) {
-                McqViewerApp(viewModel)
+                val context = LocalContext.current
+                val ttsManager = remember(context) { com.example.TtsManager(context) }
+                DisposableEffect(ttsManager) {
+                    onDispose { ttsManager.shutdown() }
+                }
+                androidx.compose.runtime.CompositionLocalProvider(com.example.LocalTtsManager provides ttsManager) {
+                    McqViewerApp(viewModel)
+                }
             }
         }
     }
@@ -61,6 +59,34 @@ fun McqViewerApp(viewModel: McqViewModel) {
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    
+    val ttsManager = com.example.LocalTtsManager.current
+    
+    // Stop audio when internal category selection states change or navigation occurs
+    LaunchedEffect(
+        currentRoute,
+        appState.viewMode,
+        appState.quizIndex,
+        appState.selectedTopic,
+        appState.selectedSubject,
+        appState.selectedSource
+    ) {
+        ttsManager?.stop()
+    }
+
+    // Stop audio if the user goes to the phone's home screen or backgrounds the app
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, ttsManager) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE || event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                ttsManager?.stop()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -90,8 +116,7 @@ fun McqViewerApp(viewModel: McqViewModel) {
                     },
                     onViewModeToggle = { viewModel.setViewMode(if (appState.viewMode == "list") "quiz" else "list") },
                     onProfileClick = { 
-                        if (appState.isLoggedIn) navController.navigate(Screen.Profile) 
-                        else navController.navigate(Screen.Auth) 
+                        navController.navigate(Screen.Profile) 
                     },
                     titleOverride = titleOverride,
                     showActions = currentRoute?.contains("Home") == true
@@ -111,8 +136,7 @@ fun McqViewerApp(viewModel: McqViewModel) {
                     onImport = { navController.navigate(Screen.JsonUpload) },
                     onSearchToggle = { viewModel.setSearchVisible(it) },
                     onNavigateToProfile = { 
-                        if (appState.isLoggedIn) navController.navigate(Screen.Profile) 
-                        else navController.navigate(Screen.Auth) 
+                        navController.navigate(Screen.Profile) 
                     },
                     onNavigateToStats = { navController.navigate(Screen.Statistics) }
                 )
@@ -125,6 +149,11 @@ fun McqViewerApp(viewModel: McqViewModel) {
                     onUpdateProfile = viewModel::updateProfile,
                     onUpdateDailyGoal = viewModel::setDailyGoal,
                     onUpdateTheme = viewModel::setThemeMode,
+                    onUpdateTtsSettings = viewModel::updateTtsSettings,
+                    onUpdateGeminiSettings = { apiKey, voice ->
+                        viewModel.setGeminiApiKey(apiKey)
+                        viewModel.setGeminiVoice(voice)
+                    },
                     onResetSelections = viewModel::clearSelections,
                     onNavigateToJsonUpload = { navController.navigate(Screen.JsonUpload) },
                     onToggleBookmark = viewModel::toggleBookmark,
@@ -134,6 +163,7 @@ fun McqViewerApp(viewModel: McqViewModel) {
                             popUpTo(0) 
                         }
                     },
+                    onNavigateToLogin = { navController.navigate(Screen.Auth) },
                     onNotificationAction = { notification ->
                         viewModel.handleNotificationAction(
                             notification = notification,

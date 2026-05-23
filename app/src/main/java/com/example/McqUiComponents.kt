@@ -1,3 +1,4 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 package com.example
 
 import android.content.Context
@@ -7,6 +8,7 @@ import android.os.VibratorManager
 import android.os.VibrationEffect
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
@@ -25,6 +27,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -36,6 +40,102 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.SubcomposeAsyncImage
 import kotlinx.coroutines.launch
+
+
+@Composable
+fun AudioSpectrumVisualizer(
+    color: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.tertiary,
+    modifier: Modifier = Modifier
+) {
+    val infiniteTransition = androidx.compose.animation.core.rememberInfiniteTransition(label = "audio_spectrum")
+    
+    val bar1Height by infiniteTransition.animateFloat(
+        initialValue = 4f,
+        targetValue = 18f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(500, easing = androidx.compose.animation.core.LinearEasing),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "bar1"
+    )
+    val bar2Height by infiniteTransition.animateFloat(
+        initialValue = 2f,
+        targetValue = 22f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(400, easing = androidx.compose.animation.core.LinearEasing),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "bar2"
+    )
+    val bar3Height by infiniteTransition.animateFloat(
+        initialValue = 6f,
+        targetValue = 20f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(600, easing = androidx.compose.animation.core.LinearEasing),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "bar3"
+    )
+    val bar4Height by infiniteTransition.animateFloat(
+        initialValue = 3f,
+        targetValue = 14f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(450, easing = androidx.compose.animation.core.LinearEasing),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "bar4"
+    )
+
+    Row(
+        modifier = modifier.height(24.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.Bottom
+    ) {
+        listOf(bar1Height, bar2Height, bar3Height, bar4Height).forEach { height ->
+            androidx.compose.foundation.layout.Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(height.dp)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(1.5.dp))
+                    .background(color)
+            )
+        }
+    }
+}
+
+@Composable
+fun SkeletalAudioBuffering(
+    modifier: Modifier = Modifier
+) {
+    val infiniteTransition = androidx.compose.animation.core.rememberInfiniteTransition(label = "audio_buffering")
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 1.0f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(800),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "alpha"
+    )
+    Row(
+        modifier = modifier.alpha(alpha),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Default.AutoAwesome,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.tertiary,
+            modifier = Modifier.size(14.dp)
+        )
+        Text(
+            text = "AI Studio Voice is synthesizing...",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.tertiary
+        )
+    }
+}
 
 
 enum class CanonicalSubject(
@@ -425,7 +525,7 @@ fun McqDashboard(
                     }
                 }
             } else {
-                items(sourcesList) { (sourceName, count) ->
+                items(sourcesList, key = { it.first }) { (sourceName, count) ->
                     val isLegacy = sourceName == "Legacy / Untagged"
                     Card(
                         modifier = Modifier
@@ -849,7 +949,7 @@ fun McqTopicList(
             }
         }
 
-        items(topicCounts.toList()) { (topic, stats) ->
+        items(topicCounts.toList(), key = { it.first }) { (topic, stats) ->
             Card(
                 modifier = Modifier.fillMaxWidth().clickable { onTopicSelected(topic) },
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -1019,7 +1119,10 @@ fun McqFileTopicList(
                 }
             }
         } else {
-            items(topicsInFile.size) { index ->
+            items(
+                count = topicsInFile.size,
+                key = { index -> "${topicsInFile[index].subject}_${topicsInFile[index].topic}" }
+            ) { index ->
                 val item = topicsInFile[index]
                 Card(
                     modifier = Modifier.fillMaxWidth().clickable { onTopicSelected(item.subject, item.topic) },
@@ -1243,7 +1346,7 @@ fun McqListMode(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            items(questions) { question ->
+            items(questions, key = { it.question }) { question ->
                 McqItemCard(
                     question = question,
                     selectedOption = selectedOptions[question.question],
@@ -1258,31 +1361,25 @@ fun McqListMode(
 
 @Composable
 fun ExamTimer(
-    sessionStartTimeMs: Long,
-    timeLimitMinutes: Int,
+    questionKey: Any,
+    onTimeUp: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    if (sessionStartTimeMs <= 0L || timeLimitMinutes <= 0) return
+    var remainingSeconds by remember(questionKey) { mutableStateOf(60) }
 
-    var remainingSeconds by remember { mutableStateOf(timeLimitMinutes * 60) }
-
-    LaunchedEffect(sessionStartTimeMs, timeLimitMinutes) {
-        while (true) {
-            val elapsedMs = System.currentTimeMillis() - sessionStartTimeMs
-            val elapsedSecs = (elapsedMs / 1000).toInt()
-            val totalSecs = timeLimitMinutes * 60
-            remainingSeconds = maxOf(0, totalSecs - elapsedSecs)
-            if (remainingSeconds <= 0) {
-                break
-            }
+    LaunchedEffect(questionKey) {
+        remainingSeconds = 60
+        while (remainingSeconds > 0) {
             kotlinx.coroutines.delay(1000L)
+            remainingSeconds--
         }
+        onTimeUp()
     }
 
     val mins = remainingSeconds / 60
     val secs = remainingSeconds % 60
     val timeString = String.format("%02d:%02d", mins, secs)
-    val isTimeCritical = remainingSeconds in 1..60
+    val isTimeCritical = remainingSeconds in 1..15
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -1383,8 +1480,8 @@ fun McqQuizMode(
                         )
                         if (isExamMode) {
                             ExamTimer(
-                                sessionStartTimeMs = sessionStartTimeMs,
-                                timeLimitMinutes = timeLimitMinutes
+                                questionKey = question.question,
+                                onTimeUp = onNext
                             )
                         }
                     }
@@ -1429,6 +1526,78 @@ fun McqQuizMode(
         }
     }
 }
+
+@Composable
+fun McqOptionRow(
+    option: String,
+    isSelected: Boolean,
+    isCorrectAnswer: Boolean,
+    showFeedback: Boolean,
+    isRevealed: Boolean,
+    isExamMode: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val backgroundColor by animateColorAsState(when {
+        !showFeedback && isSelected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+        !showFeedback -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        isCorrectAnswer -> Color(0xFFE6F4F1) // soft teal background
+        isSelected && !isCorrectAnswer -> MaterialTheme.colorScheme.errorContainer
+        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.1f)
+    }, label = "bgTransition")
+
+    val borderColor by animateColorAsState(when {
+        !showFeedback && isSelected -> MaterialTheme.colorScheme.primary
+        !showFeedback -> Color.Transparent
+        isCorrectAnswer -> Color(0xFF0D9488) // teal border
+        isSelected && !isCorrectAnswer -> MaterialTheme.colorScheme.error
+        else -> Color.Transparent
+    }, label = "borderTransition")
+
+    val textColor by animateColorAsState(when {
+        !showFeedback && isSelected -> MaterialTheme.colorScheme.primary
+        !showFeedback -> MaterialTheme.colorScheme.onSurface
+        isCorrectAnswer -> Color(0xFF0F766E) // darker teal for text
+        isSelected && !isCorrectAnswer -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+    }, label = "textTransition")
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(backgroundColor)
+            .border(1.dp, borderColor, RoundedCornerShape(16.dp))
+            .clickable(enabled = (!isRevealed || isExamMode)) { onClick() }
+            .padding(20.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = option,
+            style = MaterialTheme.typography.bodyLarge,
+            color = textColor,
+            modifier = Modifier.weight(1f)
+        )
+        if (showFeedback) {
+            if (isCorrectAnswer) {
+                Icon(
+                    Icons.Default.CheckCircle,
+                    contentDescription = "Correct",
+                    tint = Color(0xFF0D9488),
+                    modifier = Modifier.size(24.dp)
+                )
+            } else if (isSelected) {
+                Icon(
+                    Icons.Default.Cancel,
+                    contentDescription = "Incorrect",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun McqItemCard(
     question: McqField,
@@ -1447,7 +1616,12 @@ fun McqItemCard(
     val scrollState = rememberScrollState()
     val haptic = LocalHapticFeedback.current
     val viewModel: com.example.McqViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val appState by viewModel.state.collectAsState()
     val coroutineScope = rememberCoroutineScope()
+    
+    val ttsManager = com.example.LocalTtsManager.current
+    val currentTag by ttsManager?.currentTag?.collectAsState(null) ?: remember { mutableStateOf(null) }
+    val audioState by ttsManager?.audioState?.collectAsState(com.example.AudioState.IDLE) ?: remember { mutableStateOf(com.example.AudioState.IDLE) }
 
     if (isScrollable) {
         LaunchedEffect(question) {
@@ -1480,6 +1654,10 @@ fun McqItemCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                val questionTag = "q_${question.question}"
+                val isQuestionPlaying = currentTag == questionTag && audioState == com.example.AudioState.PLAYING
+                val isQuestionBuffering = currentTag == questionTag && audioState == com.example.AudioState.BUFFERING
+                
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "${question.subject ?: "General"} • ${question.topic ?: "General"}",
@@ -1487,6 +1665,59 @@ fun McqItemCard(
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.primary
                     )
+                    if (isQuestionBuffering) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        SkeletalAudioBuffering()
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isQuestionPlaying) {
+                        AudioSpectrumVisualizer(
+                            color = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.padding(end = 8.dp)
+                        )
+                    }
+                    val textToRead = question.question + ". \n" + question.options.joinToString(". ")
+                    androidx.compose.foundation.layout.Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .combinedClickable(
+                                onClick = {
+                                    ttsManager?.togglePlayPause(
+                                        tag = questionTag,
+                                        text = textToRead,
+                                        pitch = appState.ttsPitch,
+                                        speed = appState.ttsSpeed
+                                    )
+                                },
+                                onLongClick = {
+                                    ttsManager?.playGeminiTts(
+                                        tag = questionTag,
+                                        text = textToRead,
+                                        apiKey = appState.geminiApiKey,
+                                        voiceName = appState.geminiVoice,
+                                        pitch = appState.ttsPitch,
+                                        speed = appState.ttsSpeed
+                                    )
+                                }
+                            )
+                    ) {
+                        if (isQuestionBuffering) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp).testTag("audio_buffering_indicator"),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.tertiary
+                            )
+                        } else {
+                            Icon(
+                                imageVector = if (isQuestionPlaying) Icons.Default.Pause else Icons.Default.VolumeUp,
+                                contentDescription = if (isQuestionPlaying) "Pause" else "Read Aloud (Long Press for Gemini)",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
                 if (onToggleBookmark != null) {
                     IconButton(onClick = onToggleBookmark) {
@@ -1510,108 +1741,79 @@ fun McqItemCard(
             )
 
             // Images
-            if (!question.images.isNullOrBlank()) {
-                val imageUrls = question.images.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            val imageUrls = remember(question.images) {
+                if (!question.images.isNullOrBlank()) {
+                    question.images.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                } else {
+                    emptyList()
+                }
+            }
+            if (imageUrls.isNotEmpty()) {
+                val context = LocalContext.current
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(bottom = 24.dp)) {
                     imageUrls.forEach { url ->
-                        SubcomposeAsyncImage(
-                            model = url,
+                        val imageRequest = remember(url, context) {
+                            coil.request.ImageRequest.Builder(context)
+                                .data(url)
+                                .crossfade(true)
+                                .memoryCacheKey(url)
+                                .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
+                                .diskCachePolicy(coil.request.CachePolicy.ENABLED)
+                                .build()
+                        }
+                        coil.compose.AsyncImage(
+                            model = imageRequest,
                             contentDescription = "Question Image",
                             contentScale = ContentScale.FillWidth,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
-                                .border(1.dp, MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp)),
-                            loading = {
-                                Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
-                                    CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
-                                }
-                            },
-                            error = {
-                                // Don't show anything if fails to load
-                            }
+                                .border(1.dp, MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
                         )
                     }
                 }
             }
 
             // Options
+            val options = question.options
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                question.options.forEach { option ->
-                    val isCorrectAnswer = option.startsWith(question.correct_answer + ".", ignoreCase = true) 
+                options.forEach { option ->
+                    key(option) {
+                        val isCorrectAnswer = remember(option, question.correct_answer) {
+                            option.startsWith(question.correct_answer + ".", ignoreCase = true) 
                                     || option.startsWith(question.correct_answer + ")", ignoreCase = true)
                                     || option.startsWith(question.correct_answer + " ", ignoreCase = true)
                                     || option.equals(question.correct_answer, ignoreCase = true)
-
-                    val isSelected = selectedOption == option
-
-                    val backgroundColor by animateColorAsState(when {
-                        !showFeedback && isSelected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                        !showFeedback -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-                        isCorrectAnswer -> Color(0xFFE6F4F1) // soft teal background
-                        isSelected && !isCorrectAnswer -> MaterialTheme.colorScheme.errorContainer
-                        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.1f)
-                    })
-
-                    val borderColor by animateColorAsState(when {
-                        !showFeedback && isSelected -> MaterialTheme.colorScheme.primary
-                        !showFeedback -> Color.Transparent
-                        isCorrectAnswer -> Color(0xFF0D9488) // teal border
-                        isSelected && !isCorrectAnswer -> MaterialTheme.colorScheme.error
-                        else -> Color.Transparent
-                    })
-
-                    val textColor by animateColorAsState(when {
-                        !showFeedback && isSelected -> MaterialTheme.colorScheme.primary
-                        !showFeedback -> MaterialTheme.colorScheme.onSurface
-                        isCorrectAnswer -> Color(0xFF0F766E) // darker teal for text
-                        isSelected && !isCorrectAnswer -> MaterialTheme.colorScheme.error
-                        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                    })
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(backgroundColor)
-                            .border(1.dp, borderColor, RoundedCornerShape(16.dp))
-                            .clickable(enabled = (!isRevealed || isExamMode)) { handleReveal(option) }
-                            .padding(20.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = option,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = textColor,
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (showFeedback) {
-                            if (isCorrectAnswer) {
-                                Icon(
-                                    Icons.Default.CheckCircle,
-                                    contentDescription = "Correct",
-                                    tint = Color(0xFF0D9488),
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            } else if (isSelected) {
-                                Icon(
-                                    Icons.Default.Cancel,
-                                    contentDescription = "Incorrect",
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
                         }
+
+                        val isSelected = selectedOption == option
+
+                        McqOptionRow(
+                            option = option,
+                            isSelected = isSelected,
+                            isCorrectAnswer = isCorrectAnswer,
+                            showFeedback = showFeedback,
+                            isRevealed = isRevealed,
+                            isExamMode = isExamMode,
+                            onClick = { handleReveal(option) }
+                        )
                     }
                 }
             }
 
             // Explanation
             if (showFeedback) {
-                var isExplanationExpanded by rememberSaveable(question.question) { mutableStateOf(!question.explanation.isNullOrBlank()) }
-                var aiExplanation by rememberSaveable(question.question) { mutableStateOf<String?>(null) }
-                var isAiLoading by rememberSaveable(question.question) { mutableStateOf(false) }
+                var isExplanationExpanded by rememberSaveable(question.question) { mutableStateOf(!question.explanation.isNullOrBlank() || !question.ai_explanation.isNullOrBlank()) }
+                var localAiExplanation by rememberSaveable(question.question) { mutableStateOf(question.ai_explanation) }
+                var showAiExplanationMode by rememberSaveable(question.question) { mutableStateOf(question.explanation.isNullOrBlank() && !localAiExplanation.isNullOrBlank()) }
+                var isGeneratingAiExplanation by rememberSaveable(question.question) { mutableStateOf(false) }
                 
+                LaunchedEffect(question.ai_explanation) {
+                    if (localAiExplanation != question.ai_explanation && !question.ai_explanation.isNullOrBlank()) {
+                        localAiExplanation = question.ai_explanation
+                    }
+                }
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1636,29 +1838,100 @@ fun McqItemCard(
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            "Explanation",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                if (showAiExplanationMode) "AI Explanation" else "Explanation",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            val explanationTag = "e_${question.question}_${if(showAiExplanationMode) "ai" else "db"}"
+                            val isExplanationBuffering = currentTag == explanationTag && audioState == com.example.AudioState.BUFFERING
+                            if (isExplanationBuffering) {
+                                Spacer(modifier = Modifier.height(2.dp))
+                                SkeletalAudioBuffering()
+                            }
+                        }
                         if (isExplanationExpanded) {
-                            IconButton(onClick = {
-                                if (aiExplanation == null && !isAiLoading) {
-                                    isAiLoading = true
-                                    coroutineScope.launch {
-                                        aiExplanation = viewModel.getAiExplanation(
-                                            question.question, question.options, question.correct_answer, question.topic, question.subject, question.explanation
+                            if (isGeneratingAiExplanation) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.tertiary)
+                                Spacer(modifier = Modifier.width(8.dp))
+                            } else {
+                                IconButton(onClick = {
+                                    if (!localAiExplanation.isNullOrBlank()) {
+                                        showAiExplanationMode = !showAiExplanationMode
+                                    } else {
+                                        showAiExplanationMode = true
+                                        viewModel.generateAndSaveExplanation(
+                                            question = question,
+                                            onLoading = { isGeneratingAiExplanation = it },
+                                            onComplete = { result -> if (result != null) localAiExplanation = result }
                                         )
-                                        isAiLoading = false
                                     }
+                                }, modifier = Modifier.size(28.dp)) {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoAwesome,
+                                        contentDescription = "Toggle AI Explanation",
+                                        tint = if (!localAiExplanation.isNullOrBlank() && showAiExplanationMode) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                        modifier = Modifier.size(24.dp)
+                                    )
                                 }
-                            }, modifier = Modifier.size(28.dp)) {
-                                if (isAiLoading) {
-                                    androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                            }
+                            
+                            val explanationTag = "e_${question.question}_${if(showAiExplanationMode) "ai" else "db"}"
+                            val isExplanationPlaying = currentTag == explanationTag && audioState == com.example.AudioState.PLAYING
+                            val isExplanationBuffering = currentTag == explanationTag && audioState == com.example.AudioState.BUFFERING
+                            val textToRead = if (showAiExplanationMode) {
+                                localAiExplanation ?: "Generating..."
+                            } else {
+                                question.explanation ?: "No explanation available."
+                            }
+                            if (isExplanationPlaying) {
+                                AudioSpectrumVisualizer(
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.padding(end = 6.dp)
+                                )
+                            }
+                            androidx.compose.foundation.layout.Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                    .combinedClickable(
+                                        onClick = {
+                                            ttsManager?.togglePlayPause(
+                                                tag = explanationTag,
+                                                text = textToRead,
+                                                pitch = appState.ttsPitch,
+                                                speed = appState.ttsSpeed
+                                            )
+                                        },
+                                        onLongClick = {
+                                            ttsManager?.playGeminiTts(
+                                                tag = explanationTag,
+                                                text = textToRead,
+                                                apiKey = appState.geminiApiKey,
+                                                voiceName = appState.geminiVoice,
+                                                pitch = appState.ttsPitch,
+                                                speed = appState.ttsSpeed
+                                            )
+                                        }
+                                    )
+                            ) {
+                                if (isExplanationBuffering) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.tertiary
+                                    )
                                 } else {
-                                    Icon(Icons.Default.AutoAwesome, contentDescription = "AI Explanation", tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(24.dp))
+                                    Icon(
+                                        imageVector = if (isExplanationPlaying) Icons.Default.Pause else Icons.Default.VolumeUp,
+                                        contentDescription = if (isExplanationPlaying) "Pause" else "Read Explanation (Long Press for Gemini)",
+                                        tint = MaterialTheme.colorScheme.tertiary,
+                                        modifier = Modifier.size(24.dp)
+                                    )
                                 }
                             }
                             Spacer(modifier = Modifier.width(8.dp))
@@ -1672,30 +1945,21 @@ fun McqItemCard(
                     
                     AnimatedVisibility(visible = isExplanationExpanded) {
                         Column(modifier = Modifier.padding(top = 12.dp)) {
-                            if (!question.explanation.isNullOrBlank()) {
-                                HtmlText(html = question.explanation!!)
-                            } else if (aiExplanation == null && !isAiLoading) {
-                                Text("No official explanation provided. Click the AI spark icon above to generate a structured analysis.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            
-                            if (aiExplanation != null) {
-                                if (!question.explanation.isNullOrBlank()) {
-                                    HorizontalDivider(
-                                        modifier = Modifier.padding(vertical = 12.dp),
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
-                                        thickness = 1.dp
-                                    )
-                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
-                                        Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("AI Analysis", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.Bold)
+                            val contentToShow = if (showAiExplanationMode) localAiExplanation else question.explanation
+                            if (!contentToShow.isNullOrBlank()) {
+                                HtmlText(html = contentToShow)
+                            } else {
+                                if (showAiExplanationMode && isGeneratingAiExplanation) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.primary)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Generating explanation...", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
+                                } else if (showAiExplanationMode) {
+                                    Text("Failed to generate AI explanation.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                                } else {
+                                    Text("No official explanation provided.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                Text(
-                                    text = aiExplanation ?: "",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
                             }
                         }
                     }
@@ -1824,7 +2088,10 @@ fun SessionReviewScreen(
             }
         }
         
-        items(filteredQuestions.size) { index ->
+        items(
+            count = filteredQuestions.size,
+            key = { index -> filteredQuestions[index].question }
+        ) { index ->
             val q = filteredQuestions[index]
             Box(
                 modifier = Modifier.padding(vertical = 8.dp)

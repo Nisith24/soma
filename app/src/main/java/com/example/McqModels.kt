@@ -32,6 +32,7 @@ data class McqField(
     val options: List<String> = emptyList(),
     val correct_answer: String = "",
     val explanation: String? = null,
+    val ai_explanation: String? = null,
     val images: String? = null,
     val audio: String? = null,
     val source_url: String? = null

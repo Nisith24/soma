@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -35,10 +36,13 @@ fun ProfileScreen(
     onUpdateProfile: (String, String) -> Unit,
     onUpdateDailyGoal: (Int) -> Unit,
     onUpdateTheme: (AppThemeMode) -> Unit,
+    onUpdateTtsSettings: (Float, Float) -> Unit = { _, _ -> },
+    onUpdateGeminiSettings: (String, String) -> Unit = { _, _ -> },
     onResetSelections: () -> Unit,
     onNavigateToJsonUpload: () -> Unit,
     onToggleBookmark: (McqField) -> Unit,
     onLogout: () -> Unit,
+    onNavigateToLogin: () -> Unit = {},
     onNotificationAction: (AppNotification) -> Unit = {},
     onNotificationDismiss: (String) -> Unit = {},
     onSetSimulationOverrides: (Int?, Int?, Int?, Int?, String?) -> Unit = { _, _, _, _, _ -> },
@@ -51,11 +55,15 @@ fun ProfileScreen(
     var tempEmail by remember { mutableStateOf(appState.email) }
     var showBookmarksSheet by remember { mutableStateOf(false) }
     var isStudySpeedExpanded by remember { mutableStateOf(false) }
+    var isAudioSettingsExpanded by remember { mutableStateOf(false) }
+
+    var tempGeminiApiKey by remember { mutableStateOf(appState.geminiApiKey) }
 
     // Synchronize state if external state changes
-    LaunchedEffect(appState.displayName, appState.email) {
+    LaunchedEffect(appState.displayName, appState.email, appState.geminiApiKey) {
         tempName = appState.displayName
         tempEmail = appState.email
+        tempGeminiApiKey = appState.geminiApiKey
     }
 
     val totalQuestions = appState.allQuestions.size
@@ -165,9 +173,9 @@ fun ProfileScreen(
                                 .background(MaterialTheme.colorScheme.primaryContainer),
                             contentAlignment = Alignment.Center
                         ) {
-                            val initials = if (tempName.isNotBlank()) {
+                            val initials = if (appState.isLoggedIn && tempName.isNotBlank()) {
                                 tempName.split(" ").filter { it.isNotEmpty() }.joinToString("") { it.take(1) }.uppercase().take(2)
-                            } else "U"
+                            } else "G"
                             
                             Text(
                                 text = initials,
@@ -179,36 +187,55 @@ fun ProfileScreen(
 
                         Spacer(modifier = Modifier.width(16.dp))
 
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable {
+                                    if (!appState.isLoggedIn) {
+                                        onNavigateToLogin()
+                                    }
+                                }
+                        ) {
                             Text(
-                                text = appState.displayName,
+                                text = if (appState.isLoggedIn) appState.displayName else "Guest User (Tap to login)",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = appState.email,
+                                text = if (appState.isLoggedIn) appState.email else "Tap to sign in & sync progress",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
 
-                        IconButton(onClick = { isEditingProfile = true }) {
-                            Icon(
-                                imageVector = Icons.Default.Edit,
-                                contentDescription = "Edit Profile",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                        
-                        IconButton(onClick = onLogout) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ExitToApp,
-                                contentDescription = "Log Out",
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(20.dp)
-                            )
+                        if (appState.isLoggedIn) {
+                            IconButton(onClick = { isEditingProfile = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit Profile",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            
+                            IconButton(onClick = onLogout) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ExitToApp,
+                                    contentDescription = "Log Out",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        } else {
+                            IconButton(onClick = onNavigateToLogin) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.Login,
+                                    contentDescription = "Log In",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -495,6 +522,200 @@ fun ProfileScreen(
                             Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(text, style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5a. Dedicated Gemini API Settings Box
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.VpnKey,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        "Gemini API Settings",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                var showKey by remember { mutableStateOf(false) }
+                OutlinedTextField(
+                    value = tempGeminiApiKey,
+                    onValueChange = { tempGeminiApiKey = it },
+                    label = { Text("Gemini API Key") },
+                    singleLine = true,
+                    placeholder = { Text("AIzaSy...") },
+                    modifier = Modifier.fillMaxWidth().testTag("gemini_api_key_input"),
+                    visualTransformation = if (showKey) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { showKey = !showKey }) {
+                            Icon(
+                                imageVector = if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = if (showKey) "Hide" else "Show"
+                            )
+                        }
+                    }
+                )
+                if (tempGeminiApiKey != appState.geminiApiKey) {
+                    Row(
+                        modifier = Modifier.padding(top = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            "You have unsaved changes",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+
+                Button(
+                    onClick = {
+                        onUpdateGeminiSettings(tempGeminiApiKey, appState.geminiVoice)
+                        Toast.makeText(context, "Gemini API key saved successfully!", Toast.LENGTH_SHORT).show()
+                    },
+                    enabled = tempGeminiApiKey != appState.geminiApiKey,
+                    modifier = Modifier.fillMaxWidth().testTag("save_gemini_key_button"),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Save API Key")
+                }
+            }
+        }
+
+        // 5b. Combined Collapsible Audio & Voice Settings
+        Card(
+            modifier = Modifier.fillMaxWidth().animateContentSize(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { isAudioSettingsExpanded = !isAudioSettingsExpanded },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.VolumeUp,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            "Audio & Gemini Voice Settings",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    IconButton(onClick = { isAudioSettingsExpanded = !isAudioSettingsExpanded }) {
+                        Icon(
+                            imageVector = if (isAudioSettingsExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = if (isAudioSettingsExpanded) "Collapse" else "Expand",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+
+                if (isAudioSettingsExpanded) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    // Native TTS Engine Settings Subsection
+                    Text(
+                        "Native TTS Engine Settings",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Column {
+                            Text("Speech Rate: ${String.format("%.1fx", appState.ttsSpeed)}", style = MaterialTheme.typography.bodyMedium)
+                            Slider(
+                                value = appState.ttsSpeed,
+                                onValueChange = { onUpdateTtsSettings(appState.ttsPitch, it) },
+                                valueRange = 0.5f..2.0f,
+                                steps = 14
+                            )
+                        }
+                        
+                        Column {
+                            Text("Voice Pitch: ${String.format("%.1fx", appState.ttsPitch)}", style = MaterialTheme.typography.bodyMedium)
+                            Slider(
+                                value = appState.ttsPitch,
+                                onValueChange = { onUpdateTtsSettings(it, appState.ttsSpeed) },
+                                valueRange = 0.5f..2.0f,
+                                steps = 14
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f))
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Gemini Voice Settings Subsection
+                    Text(
+                        "Gemini Voice Settings",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Text("Select Voice:", style = MaterialTheme.typography.bodyMedium)
+                        androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            val voices = listOf("Aoede", "Charon", "Fenrir", "Kore", "Puck")
+                            items(voices) { voice ->
+                                androidx.compose.material3.FilterChip(
+                                    selected = appState.geminiVoice == voice,
+                                    onClick = { onUpdateGeminiSettings(appState.geminiApiKey, voice) },
+                                    label = { Text(voice) }
+                                )
+                            }
                         }
                     }
                 }
