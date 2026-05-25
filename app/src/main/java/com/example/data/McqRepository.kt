@@ -6,6 +6,8 @@ import com.example.McqField
 import com.example.AppThemeMode
 import com.example.local.AppDatabase
 import com.example.local.BookmarkEntity
+import com.example.local.SubjectTopicCount
+import com.example.local.SourceCount
 import com.example.local.toBookmarkEntity
 import com.example.local.toEntity
 import com.example.local.toField
@@ -19,9 +21,48 @@ class McqRepository(private val context: Context, private val db: AppDatabase) {
     private val prefs: SharedPreferences = context.getSharedPreferences("mcq_prefs", Context.MODE_PRIVATE)
     private val mcqDao = db.mcqDao()
     private val bookmarkDao = db.bookmarkDao()
+    private val progressDao = db.progressDao()
+
+    fun getTotalQuestionCount(): Flow<Int> = mcqDao.getTotalQuestionCount()
+
+    fun getAllProgress(): Flow<List<com.example.local.ProgressEntity>> = progressDao.getAllProgressFlow()
+    
+    suspend fun getAllProgressSync(): List<com.example.local.ProgressEntity> = progressDao.getAllProgress()
+    
+    suspend fun getAllQuestionsSync(): List<McqField> = mcqDao.getAllQuestionsSync().map { it.toField() }
+
+    suspend fun getQuestionsBySubjects(subjects: List<String>): List<McqField> = mcqDao.getQuestionsBySubjects(subjects).map { it.toField() }
+
+    suspend fun saveProgress(progress: com.example.local.ProgressEntity) {
+        progressDao.insertProgress(progress)
+    }
+
+    suspend fun saveProgressList(progressList: List<com.example.local.ProgressEntity>) {
+        progressDao.insertProgressList(progressList)
+    }
+
+    suspend fun clearProgress() {
+        progressDao.deleteAll()
+    }
 
     fun getAllQuestions(): Flow<List<McqField>> {
-        return mcqDao.getAllQuestions().map { entities -> entities.map { it.toField() } }
+        return mcqDao.getInitialQuestions().map { entities -> entities.map { it.toField() } }
+    }
+
+    suspend fun getFilteredQuestions(subject: String?, topic: String?, sourceUrl: String?, searchQuery: String, limit: Int = 100): List<McqField> {
+        return mcqDao.getFilteredQuestions(subject, topic, sourceUrl, searchQuery, limit).map { it.toField() }
+    }
+
+    fun getSubjectTopicCounts(): Flow<List<SubjectTopicCount>> {
+        return mcqDao.getSubjectTopicCounts()
+    }
+
+    fun getSourceCounts(): Flow<List<SourceCount>> {
+        return mcqDao.getSourceCounts()
+    }
+
+    fun getTopicsForSource(sourceUrl: String): Flow<List<SubjectTopicCount>> {
+        return mcqDao.getTopicsForSource(sourceUrl)
     }
 
     fun getAllBookmarks(): Flow<List<McqField>> {
@@ -53,6 +94,16 @@ class McqRepository(private val context: Context, private val db: AppDatabase) {
         if (isBookmarked) {
             bookmarkDao.updateAiExplanation(question, aiExplanation)
         }
+    }
+
+    suspend fun updateVoiceAudio(question: String, audio: String) {
+        mcqDao.updateVoiceAudio(question, audio)
+        bookmarkDao.updateVoiceAudio(question, audio)
+    }
+
+    suspend fun updateAiExplanationAndAudio(question: String, aiExplanation: String, audio: String) {
+        mcqDao.updateAiExplanationAndAudio(question, aiExplanation, audio)
+        bookmarkDao.updateAiExplanationAndAudio(question, aiExplanation, audio)
     }
 
     fun getDisplayName(): String = prefs.getString("display_name", "Nisith Praveen") ?: "Nisith Praveen"
@@ -112,17 +163,8 @@ class McqRepository(private val context: Context, private val db: AppDatabase) {
         prefs.edit().putString("gemini_voice", voice).apply()
     }
 
-    fun getSavedOptions(): Map<String, String> {
-        val mapStr = prefs.getString("saved_options", null)
-        if (mapStr.isNullOrEmpty()) return emptyMap()
-        return try {
-            Json.decodeFromString(mapStr)
-        } catch (e: Exception) {
-            emptyMap()
-        }
-    }
-
-    fun saveSelectedOptions(options: Map<String, String>) {
-        prefs.edit().putString("saved_options", Json.encodeToString(options)).apply()
+    fun getHandsFreeMode(): Boolean = prefs.getBoolean("hands_free_mode", false)
+    fun saveHandsFreeMode(enabled: Boolean) {
+        prefs.edit().putBoolean("hands_free_mode", enabled).apply()
     }
 }

@@ -7,16 +7,26 @@ import java.io.InputStreamReader
 
 object JsonStreamParser {
     
-    fun parseMultiple(inputStreams: List<Pair<String, InputStream>>, mediaDir: java.io.File? = null): List<McqField> {
+    fun parseMultiple(
+        inputStreams: List<Pair<String, InputStream>>,
+        mediaDir: java.io.File? = null,
+        errorCollector: MutableList<String>? = null
+    ): List<McqField> {
         val allFields = mutableListOf<McqField>()
         for ((fileName, stream) in inputStreams) {
+            val beforeCount = allFields.size
             try {
                 val reader = JsonReader(InputStreamReader(stream, "UTF-8"))
                 reader.isLenient = true
-                parseElement(reader, fileName, allFields, mediaDir)
+                parseElement(reader, fileName, allFields, mediaDir, errorCollector)
                 reader.close()
+                val parsedCount = allFields.size - beforeCount
+                if (parsedCount == 0) {
+                    errorCollector?.add("File '$fileName' parsed without crashing, but zero questions were successfully decoded. Please verify the schema matches (expected keys: 'question', 'options', 'correct_answer').")
+                }
             } catch (e: Exception) {
                 android.util.Log.e("JsonStreamParser", "Failed to parse stream: $fileName", e)
+                errorCollector?.add("File '$fileName' parsing crashed: ${e.localizedMessage ?: "Unknown JSON syntax error"}")
             } finally {
                 try { stream.close() } catch(e:Exception){}
             }
@@ -24,7 +34,13 @@ object JsonStreamParser {
         return allFields.distinctBy { it.question.trim().lowercase() }
     }
 
-    private fun parseElement(reader: JsonReader, fileName: String, output: MutableList<McqField>, mediaDir: java.io.File?) {
+    private fun parseElement(
+        reader: JsonReader,
+        fileName: String,
+        output: MutableList<McqField>,
+        mediaDir: java.io.File?,
+        errorCollector: MutableList<String>? = null
+    ) {
         if (!reader.hasNext()) return
         val token = reader.peek()
         if (token == JsonToken.BEGIN_ARRAY) {
@@ -33,9 +49,9 @@ object JsonStreamParser {
                 val nextToken = reader.peek()
                 if (nextToken == JsonToken.BEGIN_OBJECT) {
                     // Could be a McqField or McqResult wrapper
-                    parseObjectOrWrapper(reader, fileName, output, mediaDir)
+                    parseObjectOrWrapper(reader, fileName, output, mediaDir, errorCollector)
                 } else if (nextToken == JsonToken.BEGIN_ARRAY) {
-                    parseElement(reader, fileName, output, mediaDir) // Nested array
+                    parseElement(reader, fileName, output, mediaDir, errorCollector) // Nested array
                 } else {
                     reader.skipValue()
                 }
@@ -47,7 +63,7 @@ object JsonStreamParser {
                 val name = reader.nextName()
                 if (name == "results" || name == "data" || name == "fields") {
                     if (reader.peek() == JsonToken.BEGIN_ARRAY) {
-                        parseElement(reader, fileName, output, mediaDir)
+                        parseElement(reader, fileName, output, mediaDir, errorCollector)
                     } else {
                         reader.skipValue()
                     }
@@ -146,7 +162,13 @@ object JsonStreamParser {
         return data
     }
 
-    private fun parseObjectOrWrapper(reader: JsonReader, fileName: String, output: MutableList<McqField>, mediaDir: java.io.File?) {
+    private fun parseObjectOrWrapper(
+        reader: JsonReader,
+        fileName: String,
+        output: MutableList<McqField>,
+        mediaDir: java.io.File?,
+        errorCollector: MutableList<String>? = null
+    ) {
         reader.beginObject()
         
         var isWrapper = false
@@ -156,7 +178,7 @@ object JsonStreamParser {
             val name = reader.nextName()
             if (name == "fields" && reader.peek() == JsonToken.BEGIN_ARRAY) {
                 isWrapper = true
-                parseElement(reader, fileName, output, mediaDir)
+                parseElement(reader, fileName, output, mediaDir, errorCollector)
             } else if (!isWrapper) {
                 // Parse as McqField
                 val token = reader.peek()
@@ -249,6 +271,29 @@ object JsonStreamParser {
         }
         reader.endObject()
         
+        if (!isWrapper) {
+            val hasSomeData = field.subject?.isNotBlank() == true || field.topic?.isNotBlank() == true ||
+                              field.correctAnswer.isNotBlank() || field.explanation?.isNotBlank() == true ||
+                              !field.options.isNullOrEmpty()
+            if (field.question.isBlank()) {
+                if (hasSomeData) {
+                    errorCollector?.add("Skipped item in '$fileName': the 'question' field is missing or blank, but other fields exist.")
+                }
+            } else {
+                if (field.options.isNullOrEmpty()) {
+                    errorCollector?.add("Validation Warning: Item '${field.question.take(30)}...' in '$fileName' has no 'options' list.")
+                } else if (field.options!!.size < 2) {
+                    errorCollector?.add("Validation error: Item '${field.question.take(30)}...' has only ${field.options!!.size} options. MCQs must have at least 2 options.")
+                }
+                
+                if (field.correctAnswer.isBlank()) {
+                    errorCollector?.add("Warning: Item '${field.question.take(30)}...' in '$fileName' has an empty 'correct_answer'.")
+                } else if (!field.options.isNullOrEmpty() && !field.options!!.contains(field.correctAnswer)) {
+                    errorCollector?.add("Schema mismatch: Item '${field.question.take(30)}...' correct_answer ('${field.correctAnswer}') is not present in its options list.")
+                }
+            }
+        }
+
         if (!isWrapper && field.question.isNotBlank()) {
             output.add(
                 McqField(

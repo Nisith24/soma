@@ -37,38 +37,40 @@ fun UserStatisticsScreen(
     modifier: Modifier = Modifier
 ) {
     // Dynamically calculate stats based on the latest state
-    val optionsMap = appState.selectedOptions
-    val questions = appState.allQuestions
+    val totalQuestionsCount = appState.totalQuestionCount
+    val progressHistory = appState.progressHistory
 
-    var totalAttempted = 0
-    var totalCorrect = 0
-    val topicStatsMap = mutableMapOf<String, TopicStat>() // key: "Subject|Topic"
+    val stats = remember(progressHistory) {
+        var attempted = progressHistory.size
+        var correct = progressHistory.count { it.isCorrect }
+        val topicStatsMap = mutableMapOf<String, TopicStat>() // key: "Subject|Topic"
 
-    for (question in questions) {
-        val selected = optionsMap[question.question]
-        if (selected != null) {
-            totalAttempted++
-            val isCorrect = selected.startsWith(question.correct_answer, ignoreCase = true)
-            if (isCorrect) totalCorrect++
-
-            val sSubject = question.subject ?: "Unknown"
-            val sTopic = question.topic ?: "Unknown"
+        for (progress in progressHistory) {
+            val sSubject = progress.subject ?: "Unknown"
+            val sTopic = progress.topic ?: "Unknown"
 
             val key = "${sSubject}|${sTopic}"
             val current = topicStatsMap[key] ?: TopicStat(sSubject, sTopic, 0, 0, 0f)
             topicStatsMap[key] = current.copy(
                 attempted = current.attempted + 1,
-                correct = current.correct + (if (isCorrect) 1 else 0)
+                correct = current.correct + (if (progress.isCorrect) 1 else 0)
             )
         }
+
+        // Convert map to list and calculate accuracy
+        val computed = topicStatsMap.values.map {
+            it.copy(accuracy = if (it.attempted > 0) (it.correct.toFloat() / it.attempted) * 100 else 0f)
+        }.sortedByDescending { it.attempted }
+        
+        val overallAcc = if (attempted > 0) (correct.toFloat() / attempted) * 100 else 0f
+
+        Triple(attempted, correct, Pair(computed, overallAcc))
     }
 
-    // Convert map to list and calculate accuracy
-    val computedTopicStats = topicStatsMap.values.map {
-        it.copy(accuracy = if (it.attempted > 0) (it.correct.toFloat() / it.attempted) * 100 else 0f)
-    }.sortedByDescending { it.attempted }
-    
-    val overallAccuracy = if (totalAttempted > 0) (totalCorrect.toFloat() / totalAttempted) * 100 else 0f
+    val totalAttempted = stats.first
+    val totalCorrect = stats.second
+    val computedTopicStats = stats.third.first
+    val overallAccuracy = stats.third.second
 
     LazyColumn(
         modifier = modifier
@@ -93,7 +95,7 @@ fun UserStatisticsScreen(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            "${questions.size} total questions in database",
+                            "$totalQuestionsCount total questions in database",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

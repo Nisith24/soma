@@ -72,6 +72,7 @@ secrets {
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
+  implementation("com.google.ai.client.generativeai:generativeai:0.9.0")
   implementation(libs.firebase.auth)
   implementation(libs.play.services.auth)
   implementation(libs.androidx.activity.compose)

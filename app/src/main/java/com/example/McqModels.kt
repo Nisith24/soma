@@ -5,10 +5,11 @@ import kotlinx.serialization.Serializable
 @Serializable
 sealed class Screen {
     @Serializable data object Home : Screen()
-    @Serializable data object Profile : Screen()
+    @Serializable data class Profile(val initialSheet: String? = null) : Screen()
     @Serializable data object Statistics : Screen()
     @Serializable data object Auth : Screen()
     @Serializable data object JsonUpload : Screen()
+    @Serializable data object AiMilestones : Screen()
 }
 
 @Serializable
@@ -38,8 +39,13 @@ data class McqField(
     val source_url: String? = null
 )
 
-enum class AppThemeMode {
-    LIGHT, DARK, SYSTEM
+enum class AppThemeMode(val title: String) {
+    SYSTEM("System Theme"),
+    LIGHT("Sandal Light"),
+    DARK("Sandal Dark"),
+    NORD("Nord Calm"),
+    OCEAN("Deep Ocean"),
+    SUNSET("Warm Sunset")
 }
 
 @Serializable

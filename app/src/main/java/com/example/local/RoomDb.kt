@@ -1,5 +1,6 @@
 package com.example.local
 
+import android.content.Context
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -46,10 +47,57 @@ class McqTypeConverters {
     }
 }
 
+data class SubjectTopicCount(
+    val subject: String?,
+    val topic: String?,
+    val count: Int
+)
+
+data class SourceCount(
+    val sourceUrl: String?,
+    val count: Int
+)
+
 @Dao
 interface McqDao {
     @Query("SELECT * FROM mcq_questions ORDER BY id DESC")
     fun getAllQuestions(): Flow<List<McqEntity>>
+
+    @Query("SELECT subject, topic, COUNT(*) as count FROM mcq_questions GROUP BY subject, topic")
+    fun getSubjectTopicCounts(): Flow<List<SubjectTopicCount>>
+
+    @Query("SELECT sourceUrl, COUNT(*) as count FROM mcq_questions GROUP BY sourceUrl")
+    fun getSourceCounts(): Flow<List<SourceCount>>
+
+    @Query("""
+        SELECT subject, topic, COUNT(*) as count 
+        FROM mcq_questions 
+        WHERE (:sourceUrl IS NULL OR sourceUrl = :sourceUrl) OR (:sourceUrl = '' AND (sourceUrl IS NULL OR sourceUrl = ''))
+        GROUP BY subject, topic
+    """)
+    fun getTopicsForSource(sourceUrl: String): Flow<List<SubjectTopicCount>>
+
+    @Query("""
+        SELECT * FROM mcq_questions 
+        WHERE (:subject IS NULL OR subject = :subject)
+        AND (:topic IS NULL OR topic = :topic)
+        AND (:sourceUrl IS NULL OR sourceUrl = :sourceUrl)
+        AND (:searchQuery = '' OR question LIKE '%' || :searchQuery || '%' OR subject LIKE '%' || :searchQuery || '%' OR topic LIKE '%' || :searchQuery || '%')
+        ORDER BY id DESC LIMIT :limit
+    """)
+    suspend fun getFilteredQuestions(subject: String?, topic: String?, sourceUrl: String?, searchQuery: String, limit: Int): List<McqEntity>
+
+    @Query("SELECT * FROM mcq_questions ORDER BY id DESC LIMIT 500")
+    fun getInitialQuestions(): Flow<List<McqEntity>>
+
+    @Query("SELECT COUNT(*) FROM mcq_questions")
+    fun getTotalQuestionCount(): Flow<Int>
+
+    @Query("SELECT * FROM mcq_questions")
+    suspend fun getAllQuestionsSync(): List<McqEntity>
+
+    @Query("SELECT * FROM mcq_questions WHERE subject IN (:subjects)")
+    suspend fun getQuestionsBySubjects(subjects: List<String>): List<McqEntity>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(questions: List<McqEntity>)
@@ -68,13 +116,64 @@ interface McqDao {
 
     @Query("UPDATE mcq_questions SET aiExplanation = :aiExplanation WHERE question = :question")
     suspend fun updateAiExplanation(question: String, aiExplanation: String)
+
+    @Query("UPDATE mcq_questions SET audio = :audio WHERE question = :question")
+    suspend fun updateVoiceAudio(question: String, audio: String)
+
+    @Query("UPDATE mcq_questions SET aiExplanation = :aiExplanation, audio = :audio WHERE question = :question")
+    suspend fun updateAiExplanationAndAudio(question: String, aiExplanation: String, audio: String)
 }
 
-@Database(entities = [McqEntity::class, BookmarkEntity::class], version = 5, exportSchema = false)
+@Entity(tableName = "progress_history")
+data class ProgressEntity(
+    @PrimaryKey val question: String,
+    val subject: String?,
+    val topic: String?,
+    val selectedOption: String,
+    val isCorrect: Boolean
+)
+
+@Dao
+interface ProgressDao {
+    @Query("SELECT * FROM progress_history")
+    suspend fun getAllProgress(): List<ProgressEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertProgress(progress: ProgressEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertProgressList(progressList: List<ProgressEntity>)
+
+    @Query("SELECT * FROM progress_history")
+    fun getAllProgressFlow(): Flow<List<ProgressEntity>>
+
+    @Query("DELETE FROM progress_history")
+    suspend fun deleteAll()
+}
+
+@Database(entities = [McqEntity::class, BookmarkEntity::class, ProgressEntity::class], version = 6, exportSchema = false)
 @TypeConverters(McqTypeConverters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun mcqDao(): McqDao
     abstract fun bookmarkDao(): BookmarkDao
+    abstract fun progressDao(): ProgressDao
+
+    companion object {
+        @Volatile
+        private var INSTANCE: AppDatabase? = null
+
+        fun getInstance(context: Context): AppDatabase {
+            return INSTANCE ?: synchronized(this) {
+                val instance = androidx.room.Room.databaseBuilder(
+                    context.applicationContext,
+                    AppDatabase::class.java,
+                    "mcq_database"
+                ).fallbackToDestructiveMigration(true).build()
+                INSTANCE = instance
+                instance
+            }
+        }
+    }
 }
 
 @Entity(tableName = "bookmarks")
@@ -108,6 +207,12 @@ interface BookmarkDao {
 
     @Query("UPDATE bookmarks SET aiExplanation = :aiExplanation WHERE question = :question")
     suspend fun updateAiExplanation(question: String, aiExplanation: String)
+
+    @Query("UPDATE bookmarks SET audio = :audio WHERE question = :question")
+    suspend fun updateVoiceAudio(question: String, audio: String)
+
+    @Query("UPDATE bookmarks SET aiExplanation = :aiExplanation, audio = :audio WHERE question = :question")
+    suspend fun updateAiExplanationAndAudio(question: String, aiExplanation: String, audio: String)
 }
 
 fun McqField.toEntity(): McqEntity {
@@ -141,12 +246,21 @@ fun McqField.toBookmarkEntity(): BookmarkEntity {
 }
 
 fun McqEntity.toField(): McqField {
+    val normalizedCorrect = options.find { opt ->
+        val corr = this.correctAnswer
+        if (corr.isBlank()) false
+        else opt.startsWith("$corr.", ignoreCase = true) ||
+             opt.startsWith("$corr)", ignoreCase = true) ||
+             opt.startsWith("$corr ", ignoreCase = true) ||
+             opt.equals(corr, ignoreCase = true)
+    } ?: this.correctAnswer
+
     return McqField(
         subject = this.subject,
         topic = this.topic,
         question = this.question,
         options = this.options,
-        correct_answer = this.correctAnswer,
+        correct_answer = normalizedCorrect,
         explanation = this.explanation,
         ai_explanation = this.aiExplanation,
         images = this.images,
@@ -156,12 +270,21 @@ fun McqEntity.toField(): McqField {
 }
 
 fun BookmarkEntity.toField(): McqField {
+    val normalizedCorrect = options.find { opt ->
+        val corr = this.correctAnswer
+        if (corr.isBlank()) false
+        else opt.startsWith("$corr.", ignoreCase = true) ||
+             opt.startsWith("$corr)", ignoreCase = true) ||
+             opt.startsWith("$corr ", ignoreCase = true) ||
+             opt.equals(corr, ignoreCase = true)
+    } ?: this.correctAnswer
+
     return McqField(
         subject = this.subject,
         topic = this.topic,
         question = this.question,
         options = this.options,
-        correct_answer = this.correctAnswer,
+        correct_answer = normalizedCorrect,
         explanation = this.explanation,
         ai_explanation = this.aiExplanation,
         images = this.images,

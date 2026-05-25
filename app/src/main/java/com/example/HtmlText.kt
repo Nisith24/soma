@@ -54,7 +54,12 @@ private fun formatExplanationHtml(
 }
 
 @Composable
-fun HtmlText(html: String?, modifier: Modifier = Modifier) {
+fun HtmlText(
+    html: String?, 
+    modifier: Modifier = Modifier, 
+    activeWord: String? = null,
+    activeRange: IntRange? = null
+) {
     if (html.isNullOrBlank()) return
 
     val actualHtml = if (html.startsWith("file://")) {
@@ -63,7 +68,7 @@ fun HtmlText(html: String?, modifier: Modifier = Modifier) {
             val file = java.io.File(path)
             if (file.exists()) {
                 file.readText(Charsets.UTF_8)
-        } else {
+            } else {
                 html
             }
         } catch (e: Exception) {
@@ -77,6 +82,8 @@ fun HtmlText(html: String?, modifier: Modifier = Modifier) {
 
     val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
     val linkColor = MaterialTheme.colorScheme.primary.toArgb()
+    val highlightBg = MaterialTheme.colorScheme.primaryContainer.toArgb()
+    val highlightFg = MaterialTheme.colorScheme.onPrimaryContainer.toArgb()
     
     val primaryHex = MaterialTheme.colorScheme.primary.toArgb().toHexColor()
     val secondaryHex = MaterialTheme.colorScheme.secondary.toArgb().toHexColor()
@@ -112,7 +119,85 @@ fun HtmlText(html: String?, modifier: Modifier = Modifier) {
         update = { textView ->
             textView.setTextColor(textColor)
             textView.setLinkTextColor(linkColor)
-            textView.text = HtmlCompat.fromHtml(formattedHtml, HtmlCompat.FROM_HTML_MODE_COMPACT)
+            val spanned = HtmlCompat.fromHtml(formattedHtml, HtmlCompat.FROM_HTML_MODE_COMPACT)
+            
+            if (activeRange != null) {
+                val spannable = android.text.SpannableString(spanned)
+                val textLength = spannable.length
+                val start = activeRange.first.coerceIn(0, textLength)
+                val end = activeRange.last.coerceIn(start, textLength)
+                if (start < end) {
+                    spannable.setSpan(
+                        android.text.style.BackgroundColorSpan(highlightBg),
+                        start,
+                        end,
+                        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                    spannable.setSpan(
+                        android.text.style.ForegroundColorSpan(highlightFg),
+                        start,
+                        end,
+                        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+                textView.text = spannable
+                
+                // Auto-scroll to highlighted section
+                if (start < end) {
+                    textView.post {
+                        val layout = textView.layout
+                        if (layout != null) {
+                            val lineStart = layout.getLineForOffset(start)
+                            val lineEnd = layout.getLineForOffset(end)
+                            val yTop = layout.getLineTop(lineStart)
+                            val yBottom = layout.getLineBottom(lineEnd)
+                            val rect = android.graphics.Rect(0, yTop, textView.width, yBottom)
+                            textView.requestRectangleOnScreen(rect, false)
+                        }
+                    }
+                }
+            } else if (!activeWord.isNullOrBlank()) {
+                val spannable = android.text.SpannableString(spanned)
+                val searchStr = activeWord.trim()
+                if (searchStr.length >= 2) {
+                    val textStr = spanned.toString()
+                    val startIdx = textStr.indexOf(searchStr, ignoreCase = true)
+                    if (startIdx != -1) {
+                        val endIdx = startIdx + searchStr.length
+                        spannable.setSpan(
+                            android.text.style.BackgroundColorSpan(highlightBg),
+                            startIdx,
+                            endIdx,
+                            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                        spannable.setSpan(
+                            android.text.style.ForegroundColorSpan(highlightFg),
+                            startIdx,
+                            endIdx,
+                            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                        
+                        textView.text = spannable
+                        textView.post {
+                            val layout = textView.layout
+                            if (layout != null) {
+                                val lineStart = layout.getLineForOffset(startIdx)
+                                val lineEnd = layout.getLineForOffset(endIdx)
+                                val yTop = layout.getLineTop(lineStart)
+                                val yBottom = layout.getLineBottom(lineEnd)
+                                val rect = android.graphics.Rect(0, yTop, textView.width, yBottom)
+                                textView.requestRectangleOnScreen(rect, false)
+                            }
+                        }
+                    } else {
+                        textView.text = spannable
+                    }
+                } else {
+                    textView.text = spannable
+                }
+            } else {
+                textView.text = spanned
+            }
         }
     )
 }

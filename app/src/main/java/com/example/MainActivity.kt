@@ -19,6 +19,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.toRoute
 import com.example.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
@@ -30,17 +31,24 @@ class MainActivity : ComponentActivity() {
             val appState by viewModel.state.collectAsStateWithLifecycle()
             val isDark = when (appState.customTheme) {
                 AppThemeMode.LIGHT -> false
-                AppThemeMode.DARK -> true
                 AppThemeMode.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
+                else -> true
             }
 
-            MyApplicationTheme(darkTheme = isDark) {
+            MyApplicationTheme(appTheme = appState.customTheme, darkTheme = isDark) {
                 val context = LocalContext.current
                 val ttsManager = remember(context) { com.example.TtsManager(context) }
-                DisposableEffect(ttsManager) {
-                    onDispose { ttsManager.shutdown() }
+                val voiceOrchestrator = remember(context) { com.example.voice.VoiceOrchestrator(context) }
+                DisposableEffect(ttsManager, voiceOrchestrator) {
+                    onDispose { 
+                        ttsManager.shutdown()
+                        voiceOrchestrator.release()
+                    }
                 }
-                androidx.compose.runtime.CompositionLocalProvider(com.example.LocalTtsManager provides ttsManager) {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    com.example.LocalTtsManager provides ttsManager,
+                    com.example.LocalVoiceOrchestrator provides voiceOrchestrator
+                ) {
                     McqViewerApp(viewModel)
                 }
             }
@@ -75,11 +83,12 @@ fun McqViewerApp(viewModel: McqViewModel) {
     }
 
     // Stop audio if the user goes to the phone's home screen or backgrounds the app
-    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, ttsManager) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE || event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
                 ttsManager?.stop()
+                viewModel.commitSession()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -91,10 +100,9 @@ fun McqViewerApp(viewModel: McqViewModel) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
-            val hideOuterTopBar = currentRoute?.contains("Auth") == true || currentRoute?.contains("JsonUpload") == true
+            val hideOuterTopBar = currentRoute?.contains("Auth") == true || currentRoute?.contains("JsonUpload") == true || currentRoute?.contains("Profile") == true || currentRoute?.contains("AiMilestones") == true
             if (!hideOuterTopBar) {
                 val titleOverride = when {
-                    currentRoute?.contains("Profile") == true -> "User Profile"
                     currentRoute?.contains("Statistics") == true -> "Performance Analytics"
                     else -> null
                 }
@@ -116,7 +124,7 @@ fun McqViewerApp(viewModel: McqViewModel) {
                     },
                     onViewModeToggle = { viewModel.setViewMode(if (appState.viewMode == "list") "quiz" else "list") },
                     onProfileClick = { 
-                        navController.navigate(Screen.Profile) 
+                        navController.navigate(Screen.Profile()) 
                     },
                     titleOverride = titleOverride,
                     showActions = currentRoute?.contains("Home") == true
@@ -127,25 +135,31 @@ fun McqViewerApp(viewModel: McqViewModel) {
         NavHost(
             navController = navController,
             startDestination = Screen.Home,
-            modifier = Modifier.padding(innerPadding)
+            modifier = Modifier.padding(innerPadding),
+            enterTransition = { androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(300)) + androidx.compose.animation.slideInVertically(androidx.compose.animation.core.tween(300)) { it / 8 } },
+            exitTransition = { androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(300)) + androidx.compose.animation.slideOutVertically(androidx.compose.animation.core.tween(300)) { -it / 8 } },
+            popEnterTransition = { androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(300)) + androidx.compose.animation.slideInVertically(androidx.compose.animation.core.tween(300)) { -it / 8 } },
+            popExitTransition = { androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(300)) + androidx.compose.animation.slideOutVertically(androidx.compose.animation.core.tween(300)) { it / 8 } }
         ) {
             composable<Screen.Home> {
                 HomeScreen(
                     viewModel = viewModel, 
                     appState = appState, 
-                    onImport = { navController.navigate(Screen.JsonUpload) },
+                    onImport = { navController.navigate(Screen.Profile(initialSheet = "settings")) },
                     onSearchToggle = { viewModel.setSearchVisible(it) },
                     onNavigateToProfile = { 
-                        navController.navigate(Screen.Profile) 
+                        navController.navigate(Screen.Profile()) 
                     },
-                    onNavigateToStats = { navController.navigate(Screen.Statistics) }
+                    onNavigateToStats = { navController.navigate(Screen.Profile(initialSheet = "statistics")) }
                 )
             }
-            composable<Screen.Profile> {
+            composable<Screen.Profile> { backStackEntry ->
+                val profileRoute = backStackEntry.toRoute<Screen.Profile>()
                 ProfileScreen(
+                    viewModel = viewModel,
                     appState = appState,
+                    initialSheet = profileRoute.initialSheet,
                     onBack = { navController.popBackStack() },
-                    onNavigateToStatistics = { navController.navigate(Screen.Statistics) },
                     onUpdateProfile = viewModel::updateProfile,
                     onUpdateDailyGoal = viewModel::setDailyGoal,
                     onUpdateTheme = viewModel::setThemeMode,
@@ -155,8 +169,8 @@ fun McqViewerApp(viewModel: McqViewModel) {
                         viewModel.setGeminiVoice(voice)
                     },
                     onResetSelections = viewModel::clearSelections,
-                    onNavigateToJsonUpload = { navController.navigate(Screen.JsonUpload) },
                     onToggleBookmark = viewModel::toggleBookmark,
+                    onToggleHandsFreeMode = viewModel::toggleHandsFreeMode,
                     onLogout = { 
                         viewModel.logout()
                         navController.navigate(Screen.Home) { 
@@ -168,7 +182,7 @@ fun McqViewerApp(viewModel: McqViewModel) {
                         viewModel.handleNotificationAction(
                             notification = notification,
                             onNavigateToProfile = { /* Already on profile screen */ },
-                            onNavigateToStats = { navController.navigate(Screen.Statistics) }
+                            onNavigateToStats = { /* Will open stats bottom sheet on profile screen */ }
                         )
                     },
                     onNotificationDismiss = viewModel::dismissNotification,
@@ -176,24 +190,14 @@ fun McqViewerApp(viewModel: McqViewModel) {
                     onResetSimulationOverrides = viewModel::resetSimulationOverrides
                 )
             }
-            composable<Screen.JsonUpload> {
-                JsonUploadScreen(
-                    viewModel = viewModel,
-                    appState = appState,
-                    onBack = { navController.popBackStack() }
-                )
-            }
             composable<Screen.Auth> {
                 AuthScreen(
                     viewModel = viewModel,
                     onLoginSuccess = {
                         navController.popBackStack()
-                        navController.navigate(Screen.Profile)
+                        navController.navigate(Screen.Profile())
                     }
                 )
-            }
-            composable<Screen.Statistics> {
-                UserStatisticsScreen(appState = appState)
             }
         }
     }
@@ -242,7 +246,6 @@ fun HomeScreen(
                 } else if (appState.selectedSource != null && appState.selectedTopic == null && appState.searchQuery.isBlank() && appState.customModules.isEmpty()) {
                     McqFileTopicList(
                         sourceName = appState.selectedSource,
-                        allQuestions = appState.allQuestions,
                         appState = appState,
                         onTopicSelected = { subject, topic ->
                             viewModel.selectCategoryInSource(subject, topic, appState.selectedSource)
@@ -270,6 +273,8 @@ fun HomeScreen(
             ModeSelectionDialog(
                 topic = appState.pendingTopicForDialog,
                 availableQuestions = maxQ,
+                handsFreeModeEnabled = appState.handsFreeModeEnabled,
+                onToggleHandsFreeMode = viewModel::toggleHandsFreeMode,
                 onDismiss = { viewModel.showTopicDialog(null) },
                 onStart = { isExamMode, count, timeLimit ->
                     viewModel.startTopicSession(
@@ -302,20 +307,38 @@ fun QuizOrListContent(viewModel: McqViewModel, appState: AppState, questions: Li
         val index = appState.quizIndex.coerceIn(0, questions.size)
         if (index < questions.size) {
             val current = questions[index]
-            McqQuizMode(
-                question = current,
-                index = index,
-                total = questions.size,
-                selectedOption = appState.selectedOptions[current.question],
-                isBookmarked = appState.bookmarkedQuestionTexts.contains(current.question),
-                isExamMode = appState.examSettings.isExamMode,
-                sessionStartTimeMs = appState.examSettings.sessionStartTimeMs,
-                timeLimitMinutes = appState.examSettings.timeLimitMinutes,
-                onToggleBookmark = { viewModel.toggleBookmark(current) },
-                onOptionSelected = { viewModel.selectOption(current.question, it) },
-                onNext = viewModel::nextQuizQuestion,
-                onPrev = viewModel::previousQuizQuestion
-            )
+            Box(modifier = Modifier.fillMaxSize()) {
+                val isSessionMode = appState.examSettings.isExamMode || appState.customModules.isNotEmpty() || appState.examSettings.questionCount > 0
+                val handsFreeState = com.example.voice.rememberHandsFreeState(
+                    enabled = appState.handsFreeModeEnabled,
+                    question = current,
+                    selectedOption = if (isSessionMode) appState.sessionSelectedOptions[current.question] else appState.selectedOptions[current.question],
+                    onOptionSelected = { viewModel.selectOption(current.question, it) },
+                    onNext = viewModel::nextQuizQuestion,
+                    onPrev = viewModel::previousQuizQuestion,
+                    onDisableHandsFree = { viewModel.toggleHandsFreeMode(false) },
+                    ttsSpeed = appState.ttsSpeed,
+                    ttsPitch = appState.ttsPitch
+                )
+                
+                McqQuizMode(
+                    question = current,
+                    index = index,
+                    total = questions.size,
+                    selectedOption = if (isSessionMode) appState.sessionSelectedOptions[current.question] else appState.selectedOptions[current.question],
+                    isBookmarked = appState.bookmarkedQuestionTexts.contains(current.question),
+                    isExamMode = appState.examSettings.isExamMode,
+                    sessionStartTimeMs = appState.examSettings.sessionStartTimeMs,
+                    timeLimitMinutes = appState.examSettings.timeLimitMinutes,
+                    handsFreeModeEnabled = appState.handsFreeModeEnabled,
+                    handsFreeState = handsFreeState,
+                    onToggleHandsFreeMode = viewModel::toggleHandsFreeMode,
+                    onToggleBookmark = { viewModel.toggleBookmark(current) },
+                    onOptionSelected = { viewModel.selectOption(current.question, it) },
+                    onNext = viewModel::nextQuizQuestion,
+                    onPrev = viewModel::previousQuizQuestion
+                )
+            }
         } else {
             SessionReviewScreen(questions, appState, viewModel::resetNavigation)
         }

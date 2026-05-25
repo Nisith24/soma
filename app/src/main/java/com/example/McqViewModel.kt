@@ -33,11 +33,15 @@ data class AppState(
     val selectedSource: String? = null,
     val filterMode: String = "subject", // "subject" or "source"
     val selectedOptions: Map<String, String> = emptyMap(),
+    val sessionSelectedOptions: Map<String, String> = emptyMap(),
     val categorySummary: Map<String, Map<String, TopicStats>> = emptyMap(),
     val sourceSummary: Map<String, Int> = emptyMap(),
+    val selectedSourceTopics: Map<String, Map<String, TopicStats>> = emptyMap(),
     val pendingTopicForDialog: String? = null,
     val examSettings: ExamSettings = ExamSettings(),
     val studyStats: StudyStats = StudyStats(),
+    val progressHistory: List<com.example.local.ProgressEntity> = emptyList(),
+    val totalQuestionCount: Int = 0,
     val allQuestions: List<McqField> = emptyList(),
     val bookmarkedQuestions: List<McqField> = emptyList(),
     val bookmarkedQuestionTexts: Set<String> = emptySet(),
@@ -56,6 +60,7 @@ data class AppState(
     val customTheme: AppThemeMode = AppThemeMode.LIGHT,
     val ttsPitch: Float = 1.0f,
     val ttsSpeed: Float = 0.9f,
+    val handsFreeModeEnabled: Boolean = false,
     val notifications: List<AppNotification> = emptyList(),
     val dismissedNotificationIds: Set<String> = emptySet(),
     val streakCount: Int = 0,
@@ -67,15 +72,13 @@ data class AppState(
     val simAnswersToday: Int? = null,
     val simPharmaAccuracy: Int? = null,
     val simLowestSubject: String? = null,
-    val importProgress: Float? = null
+    val importProgress: Float? = null,
+    val importDiagnostics: List<String>? = null
 )
 
 class McqViewModel(application: Application) : AndroidViewModel(application) {
     private val db by lazy {
-        androidx.room.Room.databaseBuilder(
-            application,
-            AppDatabase::class.java, "mcq_database"
-        ).fallbackToDestructiveMigration(true).build()
+        com.example.local.AppDatabase.getInstance(application)
     }
     
     private val repository by lazy { com.example.data.McqRepository(application, db) }
@@ -86,9 +89,13 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
     private var firebaseAuth: FirebaseAuth? = null
 
     init {
-        loadProfile()
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                loadProfile()
+                initFirebase()
+            }
+        }
         observeData()
-        initFirebase()
     }
 
     private fun initFirebase() {
@@ -173,11 +180,15 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun getTodayDateString(): String {
-        return java.time.LocalDate.now().toString()
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+        return sdf.format(java.util.Date())
     }
 
     private fun getYesterdayDateString(): String {
-        return java.time.LocalDate.now().minusDays(1).toString()
+        val cal = java.util.Calendar.getInstance()
+        cal.add(java.util.Calendar.DAY_OF_YEAR, -1)
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+        return sdf.format(cal.time)
     }
 
     private fun loadProfile() {
@@ -199,7 +210,6 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val lastActive = repository.getLastActiveTime()
-        val savedOptions = repository.getSavedOptions()
         
         _state.update {
             it.copy(
@@ -210,9 +220,9 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
                 streakCount = currentStreak,
                 answersToday = currentAnswers,
                 lastActiveTime = if (lastActive == 0L) System.currentTimeMillis() else lastActive,
-                selectedOptions = savedOptions,
                 geminiApiKey = repository.getGeminiApiKey(),
-                geminiVoice = repository.getGeminiVoice()
+                geminiVoice = repository.getGeminiVoice(),
+                handsFreeModeEnabled = repository.getHandsFreeMode()
             )
         }
         rebuildNotifications()
@@ -220,11 +230,50 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun observeData() {
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                repository.deleteQuestionsBySource(null)
+            repository.getTotalQuestionCount().collect { count ->
+                _state.update { it.copy(totalQuestionCount = count) }
             }
+        }
+
+        viewModelScope.launch {
+            repository.getAllProgress().collect { progressList ->
+                val optionsMap = progressList.associate { it.question to it.selectedOption }
+                _state.update { 
+                    it.copy(
+                        progressHistory = progressList,
+                        selectedOptions = optionsMap
+                    )
+                }
+            }
+        }
+
+        viewModelScope.launch {
             repository.getAllQuestions().collect { fields ->
-                processQuestions(fields)
+                withContext(Dispatchers.Default) {
+                    processQuestions(fields)
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            repository.getSubjectTopicCounts().collect { counts ->
+                val catSum = mutableMapOf<String, MutableMap<String, TopicStats>>()
+                counts.forEach { c ->
+                    val s = c.subject ?: "Legacy"
+                    val t = c.topic ?: "Legacy"
+                    // We don't have accurate finished count without full scan easily, but we'll approximate 
+                    // or just use 0 here, or we can use another DB query. For memory safety, we use 0.
+                    if (!catSum.containsKey(s)) catSum[s] = mutableMapOf()
+                    catSum[s]!![t] = TopicStats(total = c.count, finished = 0)
+                }
+                _state.update { it.copy(categorySummary = catSum) }
+            }
+        }
+
+        viewModelScope.launch {
+            repository.getSourceCounts().collect { counts ->
+                val srcSum = counts.associate { (it.sourceUrl ?: "Legacy / Untagged") to it.count }
+                _state.update { it.copy(sourceSummary = srcSum) }
             }
         }
 
@@ -242,18 +291,36 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun processQuestions(fields: List<McqField>) {
-        val currentOptions = _state.value.selectedOptions
-        val (categorySummary, sourceSummary) = withContext(Dispatchers.Default) {
-            val catSum = calculateCategorySummary(fields, currentOptions)
-            val srcSum = fields.groupBy { it.source_url ?: "Legacy / Untagged" }.mapValues { it.value.size }
-            catSum to srcSum
+        if (fields.isEmpty()) {
+            viewModelScope.launch {
+                val dummyQuestions = listOf(
+                    McqField(
+                        subject = "General Knowledge",
+                        topic = "World Capitals",
+                        question = "What is the capital of France?",
+                        options = listOf("Berlin", "Madrid", "Paris", "Rome"),
+                        correct_answer = "Paris",
+                        explanation = "Paris is the key capital of France, famous for its culture and history.",
+                        source_url = "Demo Data"
+                    ),
+                    McqField(
+                        subject = "Human Biology",
+                        topic = "Cardiology",
+                        question = "Which muscular organ pumps blood throughout the human body?",
+                        options = listOf("Lungs", "Brain", "Heart", "Liver"),
+                        correct_answer = "Heart",
+                        explanation = "The heart is responsible for pumping blood through the circulatory system.",
+                        source_url = "Demo Data"
+                    )
+                )
+                repository.insertQuestions(dummyQuestions)
+            }
+            return
         }
         
         _state.update {
             it.copy(
                 allQuestions = fields,
-                categorySummary = categorySummary,
-                sourceSummary = sourceSummary,
                 uiState = McqUiState.Success(fields)
             )
         }
@@ -464,6 +531,11 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateTtsSettings(pitch: Float, speed: Float) {
         _state.update { it.copy(ttsPitch = pitch, ttsSpeed = speed) }
+    }
+
+    fun toggleHandsFreeMode(enabled: Boolean) {
+        repository.saveHandsFreeMode(enabled)
+        _state.update { it.copy(handsFreeModeEnabled = enabled) }
     }
 
     fun updateProfile(name: String, email: String) {
@@ -717,34 +789,46 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
         // Track the response times, streak logging, etc.
         trackAnswerActivity()
 
-        _state.update { currentState ->
-            val newOptions = currentState.selectedOptions + (questionText to option)
-            repository.saveSelectedOptions(newOptions)
-            val stats = computeStats(currentState.allQuestions, newOptions)
-            val catSum = calculateCategorySummary(currentState.allQuestions, newOptions)
+        _state.update { st ->
+            val newOptions = st.selectedOptions + (questionText to option)
+            val newSessionOptions = st.sessionSelectedOptions + (questionText to option)
 
-            currentState.copy(
+            val currentUi = (st.uiState as? McqUiState.Success)?.questions ?: emptyList()
+            val stats = computeStats(currentUi, newOptions)
+
+            st.copy(
                 selectedOptions = newOptions, 
-                studyStats = stats,
-                categorySummary = catSum
+                sessionSelectedOptions = newSessionOptions,
+                studyStats = stats
             )
         }
         rebuildNotifications()
     }
 
-    private fun calculateCategorySummary(
-        questions: List<McqField>, 
-        options: Map<String, String>
-    ): Map<String, Map<String, TopicStats>> {
-        return questions.groupBy { it.subject ?: "General" }
-            .mapValues { entry -> 
-                entry.value.groupBy { it.topic ?: "Untracked" }.mapValues { topicEntry ->
-                    TopicStats(
-                        total = topicEntry.value.size,
-                        finished = topicEntry.value.count { options.containsKey(it.question) }
-                    )
-                }
+    fun commitSession() {
+        val currentState = _state.value
+        val sessionOptions = currentState.sessionSelectedOptions
+        if (sessionOptions.isEmpty()) return
+
+        val currentUiQuestions = (currentState.uiState as? McqUiState.Success)?.questions ?: emptyList()
+        val progressEntities = sessionOptions.mapNotNull { (qText, opt) ->
+            val qObj = currentUiQuestions.find { it.question == qText }
+            if (qObj != null) {
+                com.example.local.ProgressEntity(
+                    question = qText,
+                    subject = qObj.subject,
+                    topic = qObj.topic,
+                    selectedOption = opt,
+                    isCorrect = isCorrect(qObj, opt)
+                )
+            } else null
+        }
+
+        if (progressEntities.isNotEmpty()) {
+            viewModelScope.launch {
+                repository.saveProgressList(progressEntities)
             }
+        }
     }
 
     private fun computeStats(all: List<McqField>, selected: Map<String, String>): StudyStats {
@@ -756,13 +840,11 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
         return StudyStats(selected.size, correct, percent)
     }
 
+    // Skipping other methods, removing calculateCategorySummary as it's no longer used.
+
     private fun isCorrect(question: McqField, selectedOption: String): Boolean {
-        val corr = question.correct_answer
-        if (corr.isBlank()) return false
-        return selectedOption.startsWith("$corr.", ignoreCase = true)
-            || selectedOption.startsWith("$corr)", ignoreCase = true)
-            || selectedOption.startsWith("$corr ", ignoreCase = true)
-            || selectedOption.equals(corr, ignoreCase = true)
+        // Since we normalized correct_answer parsing in the DB layer, we can do direct evaluation in UI layer
+        return question.correct_answer.equals(selectedOption, ignoreCase = true)
     }
 
     fun toggleBookmark(question: McqField) {
@@ -774,15 +856,29 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
 
     private val aiExplanationService = AiExplanationService()
     
-    fun generateAndSaveExplanation(question: McqField, onLoading: (Boolean) -> Unit, onComplete: (String?) -> Unit) {
+    fun generateAndSaveExplanation(question: McqField, onLoading: (Boolean) -> Unit, onChunk: (String) -> Unit, onComplete: (String?) -> Unit) {
         viewModelScope.launch {
             onLoading(true)
-            val generatedExp = aiExplanationService.generateExplanation(question.question, question.options, question.correct_answer, _state.value.geminiApiKey)
-            if (generatedExp != null) {
-                // Save it to persistent local storage so next time it is available instantly
+            val flow = aiExplanationService.generateExplanationStream(question.question, question.options, question.correct_answer, _state.value.geminiApiKey)
+            if (flow != null) {
+                var fullText = ""
+                flow.collect { chunk ->
+                    fullText += chunk
+                    val displayChunk = fullText
+                        .removePrefix("```html")
+                        .removePrefix("```")
+                        .removeSuffix("```")
+                        .trim()
+                    onChunk(displayChunk)
+                }
+                val finalCleanText = fullText
+                        .removePrefix("```html")
+                        .removePrefix("```")
+                        .removeSuffix("```")
+                        .trim()
                 val isBookmarked = _state.value.bookmarkedQuestionTexts.contains(question.question)
-                repository.updateAiExplanation(question.question, generatedExp, isBookmarked)
-                onComplete(generatedExp)
+                repository.updateAiExplanation(question.question, finalCleanText, isBookmarked)
+                onComplete(finalCleanText)
             } else {
                 onComplete(null)
             }
@@ -791,8 +887,16 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearSelections() {
-        repository.saveSelectedOptions(emptyMap())
-        _state.update { it.copy(selectedOptions = emptyMap(), studyStats = StudyStats(), categorySummary = calculateCategorySummary(it.allQuestions, emptyMap())) }
+        viewModelScope.launch {
+            repository.clearProgress()
+            _state.update { 
+                it.copy(
+                    selectedOptions = emptyMap(), 
+                    sessionSelectedOptions = emptyMap(),
+                    studyStats = StudyStats()
+                )
+            }
+        }
     }
 
     fun deleteQuestionsBySource(sourceName: String) {
@@ -874,7 +978,7 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadMultipleJsonsFromUris(context: android.content.Context, uris: List<android.net.Uri>) {
-        _state.update { it.copy(uiState = McqUiState.Loading, importProgress = 0.0f) }
+        _state.update { it.copy(uiState = McqUiState.Loading, importProgress = 0.0f, importDiagnostics = null) }
         viewModelScope.launch {
             try {
                 val totalBytes = withContext(Dispatchers.IO) {
@@ -882,6 +986,7 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 
                 var accumulatedBytesRead = 0L
+                val errors = ArrayList<String>()
 
                 val allFields = withContext(Dispatchers.IO) {
                     val mediaDir = java.io.File(context.filesDir, "local_media")
@@ -907,10 +1012,15 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
                                 name to finalStream
                             } else null
                         } catch (e: Exception) {
+                            errors.add("File accessibility error starting stream for URI: ${e.localizedMessage}")
                             null
                         }
                     }
-                    JsonStreamParser.parseMultiple(streams, mediaDir)
+                    JsonStreamParser.parseMultiple(streams, mediaDir, errors)
+                }
+
+                if (errors.isNotEmpty()) {
+                    _state.update { it.copy(importDiagnostics = errors) }
                 }
 
                 if (allFields.isEmpty()) {
@@ -926,7 +1036,8 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
                         val dbProgress = 0.50f + ((index + 1).toFloat() / totalChunks) * 0.50f
                         _state.update { it.copy(importProgress = dbProgress.coerceIn(0.50f, 1.0f)) }
                     }
-                    _state.update { it.copy(uiState = McqUiState.Success(allFields), importProgress = null) }
+                    _state.update { it.copy(importProgress = null) }
+                    applyFilters()
                 }
             } catch (e: Exception) {
                 _state.update { it.copy(uiState = McqUiState.Error("Import fail: ${e.localizedMessage}"), importProgress = null) }
@@ -935,18 +1046,129 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadJson(jsonString: String, sourceName: String? = null) {
-        // Fallback or deprecated if needed somewhere else, but better to support stream
-        _state.update { it.copy(uiState = McqUiState.Loading) }
+        _state.update { it.copy(uiState = McqUiState.Loading, importDiagnostics = null) }
         viewModelScope.launch {
             try {
+                val errors = ArrayList<String>()
                 java.io.ByteArrayInputStream(jsonString.toByteArray(Charsets.UTF_8)).use { stream ->
                     val allFields = withContext(Dispatchers.IO) {
-                        JsonStreamParser.parseMultiple(listOf((sourceName ?: "Imported") to stream))
+                        JsonStreamParser.parseMultiple(listOf((sourceName ?: "Imported") to stream), errorCollector = errors)
                     }
                     repository.insertQuestions(allFields)
                 }
+                if (errors.isNotEmpty()) {
+                    _state.update { it.copy(importDiagnostics = errors) }
+                }
+                applyFilters()
             } catch (e: Exception) {
                 _state.update { it.copy(uiState = McqUiState.Error("Import fail: ${e.localizedMessage}")) }
+            }
+        }
+    }
+
+    fun dismissImportDiagnostics() {
+        _state.update { it.copy(importDiagnostics = null) }
+    }
+
+    fun exportDbToZip(context: android.content.Context, uri: android.net.Uri, onStart: () -> Unit, onComplete: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            onStart()
+            try {
+                // Fetch the sync data directly inside IO dispatcher
+                val allQuestions = withContext(Dispatchers.IO) {
+                    repository.getAllQuestionsSync()
+                }
+                val allProgressRaw = withContext(Dispatchers.IO) {
+                    repository.getAllProgressSync()
+                }
+                
+                val exportedProgress = allProgressRaw.map { 
+                    com.example.utils.ExportedProgress(
+                        question = it.question,
+                        subject = it.subject,
+                        topic = it.topic,
+                        selectedOption = it.selectedOption,
+                        isCorrect = it.isCorrect
+                    )
+                }
+
+                val success = com.example.utils.ZipExportUtils.exportDatabaseToZip(
+                    context = context,
+                    uri = uri,
+                    allQuestions = allQuestions,
+                    allProgress = exportedProgress,
+                    settings = emptyMap()
+                )
+                
+                withContext(Dispatchers.Main) { onComplete(success) }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) { onComplete(false) }
+            }
+        }
+    }
+
+    fun restoreDbFromZip(context: android.content.Context, uri: android.net.Uri) {
+        viewModelScope.launch {
+            _state.update { it.copy(importProgress = 0.0f) }
+            try {
+                val dbExport = com.example.utils.ZipExportUtils.importDatabaseFromZip(context, uri)
+                if (dbExport != null) {
+                    _state.update { it.copy(importProgress = 0.5f) }
+                    
+                    if (dbExport.questions.isNotEmpty()) {
+                        withContext(Dispatchers.IO) {
+                            val db = com.example.local.AppDatabase.getInstance(context)
+                            val entities = dbExport.questions.map { 
+                                com.example.local.McqEntity(
+                                    subject = it.subject,
+                                    topic = it.topic,
+                                    question = it.question,
+                                    options = it.options,
+                                    correctAnswer = it.correct_answer,
+                                    explanation = it.explanation,
+                                    aiExplanation = it.ai_explanation,
+                                    images = it.images,
+                                    audio = it.audio,
+                                    sourceUrl = it.source_url
+                                )
+                            }
+                            db.mcqDao().insertAll(entities)
+                        }
+                    }
+
+                    if (dbExport.progress.isNotEmpty()) {
+                        withContext(Dispatchers.IO) {
+                            val db = com.example.local.AppDatabase.getInstance(context)
+                            val progressEntities = dbExport.progress.map {
+                                com.example.local.ProgressEntity(
+                                    question = it.question,
+                                    subject = it.subject,
+                                    topic = it.topic,
+                                    selectedOption = it.selectedOption,
+                                    isCorrect = it.isCorrect
+                                )
+                            }
+                            // Insert progress
+                            progressEntities.forEach { pd ->
+                                try {
+                                    db.progressDao().insertProgress(pd)
+                                } catch (_: Exception) {}
+                            }
+                        }
+                    }
+                    
+                    // We can restore settings if needed in the future
+
+                    _state.update { it.copy(importProgress = 1.0f) }
+                    kotlinx.coroutines.delay(1000)
+                    _state.update { it.copy(importProgress = null) }
+                } else {
+                    _state.update { it.copy(importProgress = null, importDiagnostics = listOf("Failed to read ZIP")) }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                _state.update { it.copy(importProgress = null, importDiagnostics = listOf("Error restoring: ${e.message}")) }
             }
         }
     }
@@ -1001,6 +1223,7 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startTopicSession(subject: String?, topic: String?, settings: ExamSettings, keepSource: Boolean = false) {
+        commitSession()
         val updatedSettings = settings.copy(sessionStartTimeMs = System.currentTimeMillis())
         _state.update { 
             it.copy(
@@ -1010,13 +1233,15 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
                 customModules = emptyMap(),
                 pendingTopicForDialog = null,
                 examSettings = updatedSettings,
-                quizIndex = 0
+                quizIndex = 0,
+                sessionSelectedOptions = emptyMap()
             ) 
         }
         applyFilters()
     }
 
     fun startCustomSession(modules: Map<String, Set<String>>, settings: ExamSettings) {
+        commitSession()
         val updatedSettings = settings.copy(sessionStartTimeMs = System.currentTimeMillis())
         _state.update { 
             it.copy(
@@ -1025,15 +1250,37 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
                 selectedSource = null,
                 customModules = modules,
                 examSettings = updatedSettings,
-                quizIndex = 0
+                quizIndex = 0,
+                sessionSelectedOptions = emptyMap()
             ) 
         }
         applyFilters()
     }
 
+    private var sourceTopicJob: kotlinx.coroutines.Job? = null
+
     fun selectSource(source: String?) {
         _state.update { it.copy(selectedSource = source, selectedSubject = null, selectedTopic = null, customModules = emptyMap()) }
         applyFilters()
+        
+        sourceTopicJob?.cancel()
+        if (source != null) {
+            val dbSource = if (source == "Legacy / Untagged") "" else source
+            sourceTopicJob = viewModelScope.launch(Dispatchers.Default) {
+                repository.getTopicsForSource(dbSource).collect { counts ->
+                    val catSum = mutableMapOf<String, MutableMap<String, TopicStats>>()
+                    counts.forEach { c ->
+                        val s = c.subject ?: "Legacy"
+                        val t = c.topic ?: "Legacy"
+                        if (!catSum.containsKey(s)) catSum[s] = mutableMapOf()
+                        catSum[s]!![t] = TopicStats(total = c.count, finished = 0)
+                    }
+                    _state.update { it.copy(selectedSourceTopics = catSum) }
+                }
+            }
+        } else {
+            _state.update { it.copy(selectedSourceTopics = emptyMap()) }
+        }
     }
 
     fun setFilterMode(mode: String) {
@@ -1041,7 +1288,8 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun resetNavigation() {
-        _state.update { it.copy(selectedSubject = null, selectedTopic = null, selectedSource = null, customModules = emptyMap(), quizIndex = 0) }
+        commitSession()
+        _state.update { it.copy(selectedSubject = null, selectedTopic = null, selectedSource = null, customModules = emptyMap(), quizIndex = 0, sessionSelectedOptions = emptyMap()) }
         applyFilters()
     }
 
@@ -1062,12 +1310,26 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.Default) {
             val current = _state.value
             val currentOptions = current.selectedOptions
-            val filtered = current.allQuestions.filter { q ->
-                val matchesQuery = current.searchQuery.isBlank() || 
-                    q.question.contains(current.searchQuery, ignoreCase = true) ||
-                    q.subject?.contains(current.searchQuery, ignoreCase = true) == true ||
-                    q.topic?.contains(current.searchQuery, ignoreCase = true) == true
-                
+            
+            // Query DB directly
+            val baseSubject = current.selectedSubject
+            val baseTopic = current.selectedTopic
+            val baseSource = if (current.selectedSource == "Legacy / Untagged") "" else current.selectedSource
+            
+            val rawFiltered = if (current.customModules.isNotEmpty()) {
+                val subjects = current.customModules.keys.toList()
+                repository.getQuestionsBySubjects(subjects)
+            } else {
+                repository.getFilteredQuestions(
+                    subject = baseSubject,
+                    topic = baseTopic,
+                    sourceUrl = baseSource,
+                    searchQuery = current.searchQuery,
+                    limit = 500
+                )
+            }
+
+            val filtered = rawFiltered.filter { q ->
                 val matchesSubject = when {
                     current.customModules.isNotEmpty() -> {
                         val subName = q.subject ?: "General"
@@ -1075,20 +1337,14 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
                         val topicsForSub = current.customModules[subName]
                         topicsForSub != null && topicsForSub.contains(topName)
                     }
-                    current.selectedSubject != null -> q.subject == current.selectedSubject
                     else -> true
                 }
-                val matchesTopic = current.selectedTopic == null || q.topic == current.selectedTopic
-                val matchesSource = current.selectedSource == null || 
-                    (current.selectedSource == "Legacy / Untagged" && q.source_url.isNullOrBlank()) ||
-                    (q.source_url == current.selectedSource)
-                
-                matchesQuery && matchesSubject && matchesTopic && matchesSource
+                matchesSubject
             }
 
-            val finalFiltered = if ((current.selectedTopic != null || current.customModules.isNotEmpty()) && current.examSettings.isExamMode) {
+            val finalFiltered = if ((current.selectedTopic != null || current.customModules.isNotEmpty()) && current.examSettings.questionCount > 0) {
                 val count = current.examSettings.questionCount
-                if (count > 0 && count < filtered.size) {
+                if (count < filtered.size) {
                     filtered.shuffled().take(count)
                 } else {
                     filtered.shuffled()
@@ -1097,14 +1353,9 @@ class McqViewModel(application: Application) : AndroidViewModel(application) {
                 filtered
             }
 
-            val catSum = calculateCategorySummary(filtered, currentOptions)
-            val srcSum = filtered.groupBy { it.source_url ?: "Legacy / Untagged" }.mapValues { it.value.size }
-
             _state.update { 
                 it.copy(
                     uiState = McqUiState.Success(finalFiltered),
-                    categorySummary = catSum,
-                    sourceSummary = srcSum,
                     quizIndex = 0
                 ) 
             }

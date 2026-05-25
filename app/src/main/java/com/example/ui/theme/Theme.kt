@@ -54,8 +54,69 @@ private val LightColorScheme =
     onErrorContainer = SandalSurfaceLight
   )
 
+private val NordColorScheme = darkColorScheme(
+    primary = NordPrimary,
+    onPrimary = NordOnPrimary,
+    primaryContainer = NordPrimaryContainer,
+    onPrimaryContainer = NordOnPrimaryContainer,
+    secondary = NordSecondary,
+    onSecondary = NordSurface,
+    secondaryContainer = NordSecondaryContainer,
+    onSecondaryContainer = NordOnSecondaryContainer,
+    surface = NordSurface,
+    onSurface = NordText,
+    surfaceVariant = NordSurfaceVariant,
+    onSurfaceVariant = NordOnSurfaceVariant,
+    background = NordBackground,
+    onBackground = NordText,
+    error = NordError,
+    errorContainer = NordErrorContainer,
+    onErrorContainer = NordText
+)
+
+private val OceanColorScheme = darkColorScheme(
+    primary = OceanPrimary,
+    onPrimary = OceanOnPrimary,
+    primaryContainer = OceanPrimaryContainer,
+    onPrimaryContainer = OceanOnPrimaryContainer,
+    secondary = OceanSecondary,
+    onSecondary = OceanSurface,
+    secondaryContainer = OceanSecondaryContainer,
+    onSecondaryContainer = OceanOnSecondaryContainer,
+    surface = OceanSurface,
+    onSurface = OceanText,
+    surfaceVariant = OceanSurfaceVariant,
+    onSurfaceVariant = OceanOnSurfaceVariant,
+    background = OceanBackground,
+    onBackground = OceanText,
+    error = OceanError,
+    errorContainer = OceanErrorContainer,
+    onErrorContainer = OceanText
+)
+
+private val SunsetColorScheme = darkColorScheme(
+    primary = SunsetPrimary,
+    onPrimary = SunsetOnPrimary,
+    primaryContainer = SunsetPrimaryContainer,
+    onPrimaryContainer = SunsetOnPrimaryContainer,
+    secondary = SunsetSecondary,
+    onSecondary = SunsetSurface,
+    secondaryContainer = SunsetSecondaryContainer,
+    onSecondaryContainer = SunsetOnSecondaryContainer,
+    surface = SunsetSurface,
+    onSurface = SunsetText,
+    surfaceVariant = SunsetSurfaceVariant,
+    onSurfaceVariant = SunsetOnSurfaceVariant,
+    background = SunsetBackground,
+    onBackground = SunsetText,
+    error = SunsetError,
+    errorContainer = SunsetErrorContainer,
+    onErrorContainer = SunsetText
+)
+
 @Composable
 fun MyApplicationTheme(
+  appTheme: com.example.AppThemeMode = com.example.AppThemeMode.SYSTEM,
   darkTheme: Boolean = isSystemInDarkTheme(),
   // Disable dynamic color by default so our custom Sandal theme shines
   dynamicColor: Boolean = false,
@@ -63,6 +124,11 @@ fun MyApplicationTheme(
 ) {
   val colorScheme =
     when {
+      appTheme == com.example.AppThemeMode.NORD -> NordColorScheme
+      appTheme == com.example.AppThemeMode.OCEAN -> OceanColorScheme
+      appTheme == com.example.AppThemeMode.SUNSET -> SunsetColorScheme
+      appTheme == com.example.AppThemeMode.LIGHT -> LightColorScheme
+      appTheme == com.example.AppThemeMode.DARK -> DarkColorScheme
       dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
         val context = LocalContext.current
         if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)

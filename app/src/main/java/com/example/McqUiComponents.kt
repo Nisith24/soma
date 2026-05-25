@@ -9,6 +9,8 @@ import android.os.VibrationEffect
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
@@ -24,10 +26,13 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -926,6 +931,18 @@ fun McqTopicList(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+
+    val filteredTopics = remember(topicCounts, searchQuery) {
+        if (searchQuery.isBlank()) {
+            topicCounts.toList()
+        } else {
+            topicCounts.toList().filter { (topic, _) ->
+                topic.contains(searchQuery, ignoreCase = true)
+            }
+        }.sortedBy { it.first }
+    }
+
     LazyColumn(
         modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
         contentPadding = PaddingValues(24.dp),
@@ -946,10 +963,49 @@ fun McqTopicList(
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.padding(top = 4.dp)
                 )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Search topics...", style = MaterialTheme.typography.bodyMedium) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Clear, contentDescription = "Clear search", modifier = Modifier.size(20.dp))
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
+                        focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                    )
+                )
             }
         }
 
-        items(topicCounts.toList(), key = { it.first }) { (topic, stats) ->
+        if (filteredTopics.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No topics found matching search query.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else {
+            items(filteredTopics, key = { it.first }) { (topic, stats) ->
             Card(
                 modifier = Modifier.fillMaxWidth().clickable { onTopicSelected(topic) },
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -1002,44 +1058,43 @@ fun McqTopicList(
         }
     }
 }
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun McqFileTopicList(
     sourceName: String,
-    allQuestions: List<McqField>,
     appState: AppState,
     onTopicSelected: (subject: String, topic: String) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val questionsInFile = remember(allQuestions, sourceName) {
-        allQuestions.filter { q ->
-            q.source_url == sourceName || (sourceName == "Legacy / Untagged" && q.source_url.isNullOrBlank())
-        }
-    }
+    val srcTopics = appState.selectedSourceTopics
 
-    val subjectsInFile = remember(questionsInFile) {
-        questionsInFile.mapNotNull { it.subject }.distinct().sorted()
+    val subjectsInFile = remember(srcTopics) {
+        srcTopics.keys.toList().sorted()
     }
 
     var selectedSubjectFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
 
-    val topicsInFile = remember(questionsInFile, selectedSubjectFilter, appState.selectedOptions) {
-        questionsInFile
-            .filter { q -> selectedSubjectFilter == null || q.subject == selectedSubjectFilter }
-            .groupBy { q -> (q.subject ?: "Unknown Subject") to (q.topic ?: "Unknown Topic") }
-            .map { (key, qList) ->
-                val (sub, top) = key
-                val finished = qList.count { q -> appState.selectedOptions.containsKey(q.question) }
-                FileTopicItem(
-                    subject = sub,
-                    topic = top,
-                    totalCount = qList.size,
-                    finishedCount = finished
-                )
+    val topicsInFile = remember(srcTopics, selectedSubjectFilter, appState.selectedOptions, searchQuery) {
+        val mapped = mutableListOf<FileTopicItem>()
+        for ((sub, topics) in srcTopics) {
+            if (selectedSubjectFilter == null || sub == selectedSubjectFilter) {
+                for ((top, stats) in topics) {
+                    if (searchQuery.isBlank() || top.contains(searchQuery, ignoreCase = true)) {
+                        mapped.add(FileTopicItem(
+                            subject = sub,
+                            topic = top,
+                            totalCount = stats.total,
+                            finishedCount = stats.finished
+                        ))
+                    }
+                }
             }
-            .sortedWith(compareBy({ it.subject }, { it.topic }))
+        }
+        mapped.sortedWith(compareBy({ it.subject }, { it.topic }))
     }
 
     LazyColumn(
@@ -1070,35 +1125,104 @@ fun McqFileTopicList(
                     }
                 }
                 Spacer(modifier = Modifier.height(16.dp))
+
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                    placeholder = { Text("Search topics in file...", style = MaterialTheme.typography.bodyMedium) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Clear, contentDescription = "Clear search", modifier = Modifier.size(20.dp))
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
+                        focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                    )
+                )
                 
                 if (subjectsInFile.isNotEmpty()) {
-                    Text(
-                        text = "Filter by Subject:",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
+                    var isSubjectsExpanded by rememberSaveable { mutableStateOf(false) }
                     
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isSubjectsExpanded = !isSubjectsExpanded }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        FilterChip(
-                            selected = selectedSubjectFilter == null,
-                            onClick = { selectedSubjectFilter = null },
-                            label = { Text("All Subjects") },
-                            shape = RoundedCornerShape(12.dp)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Filter by Subject:",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            
+                            if (!isSubjectsExpanded) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        text = selectedSubjectFilter ?: "All Subjects",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
                         
-                        subjectsInFile.forEach { subject ->
+                        IconButton(
+                            onClick = { isSubjectsExpanded = !isSubjectsExpanded },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isSubjectsExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                contentDescription = if (isSubjectsExpanded) "Collapse subjects" else "Expand subjects",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    
+                    AnimatedVisibility(
+                        visible = isSubjectsExpanded,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                    ) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
                             FilterChip(
-                                selected = selectedSubjectFilter == subject,
-                                onClick = { selectedSubjectFilter = subject },
-                                label = { Text(subject) },
+                                selected = selectedSubjectFilter == null,
+                                onClick = { selectedSubjectFilter = null },
+                                label = { Text("All Subjects") },
                                 shape = RoundedCornerShape(12.dp)
                             )
+                            
+                            subjectsInFile.forEach { subject ->
+                                FilterChip(
+                                    selected = selectedSubjectFilter == subject,
+                                    onClick = { selectedSubjectFilter = subject },
+                                    label = { Text(subject) },
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -1196,12 +1320,16 @@ data class FileTopicItem(
 fun ModeSelectionDialog(
     topic: String,
     availableQuestions: Int,
+    handsFreeModeEnabled: Boolean = false,
+    onToggleHandsFreeMode: (Boolean) -> Unit = {},
     onDismiss: () -> Unit,
     onStart: (isExamMode: Boolean, questionCount: Int, timeLimitMinutes: Int) -> Unit
 ) {
     var isExamMode by remember { mutableStateOf(false) }
     var questionCountInput by remember { mutableStateOf(minOf(availableQuestions, 50).coerceAtLeast(1).toString()) }
     var timeLimitInput by remember { mutableStateOf(minOf(availableQuestions, 50).coerceAtLeast(1).toString()) }
+    
+    val wasEnabledInProfile = remember { handsFreeModeEnabled }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1217,11 +1345,42 @@ fun ModeSelectionDialog(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Text(
-                    text = "Topic: $topic",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Topic: $topic",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    
+                    if (wasEnabledInProfile) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (handsFreeModeEnabled) Icons.Default.Mic else Icons.Default.MicOff,
+                                contentDescription = null,
+                                tint = if (handsFreeModeEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Voice",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (handsFreeModeEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Switch(
+                                checked = handsFreeModeEnabled,
+                                onCheckedChange = { onToggleHandsFreeMode(it) },
+                                modifier = Modifier.scale(0.7f)
+                            )
+                        }
+                    }
+                }
                 
                 // Segmented control style for mode selection (using Radio Buttons or Chips for simplicity)
                 Row(
@@ -1410,6 +1569,9 @@ fun McqQuizMode(
     selectedOption: String?,
     isBookmarked: Boolean,
     isExamMode: Boolean,
+    handsFreeModeEnabled: Boolean = false,
+    handsFreeState: com.example.voice.HandsFreeState? = null,
+    onToggleHandsFreeMode: (Boolean) -> Unit = {},
     onToggleBookmark: () -> Unit,
     onOptionSelected: (String) -> Unit,
     onNext: () -> Unit,
@@ -1456,6 +1618,8 @@ fun McqQuizMode(
 
         // Use a weight and vertical scroll for the question area
         Box(modifier = Modifier.weight(1f)) {
+            val highlightRange = if (handsFreeState?.activeUtteranceId == "read_question") handsFreeState.activeUtteranceRange else null
+            
             McqItemCard(
                 question = question,
                 selectedOption = selectedOption,
@@ -1466,6 +1630,8 @@ fun McqQuizMode(
                 modifier = Modifier.fillMaxSize(),
                 isScrollable = true,
                 cleanStyle = true,
+                highlightRange = highlightRange,
+                handsFreeState = handsFreeState,
                 headerContent = {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
@@ -1478,11 +1644,20 @@ fun McqQuizMode(
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
-                        if (isExamMode) {
-                            ExamTimer(
-                                questionKey = question.question,
-                                onTimeUp = onNext
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { onToggleHandsFreeMode(!handsFreeModeEnabled) }) {
+                                Icon(
+                                    imageVector = if (handsFreeModeEnabled) androidx.compose.material.icons.Icons.Default.Mic else androidx.compose.material.icons.Icons.Default.MicOff,
+                                    contentDescription = "Toggle Hands-Free Mode",
+                                    tint = if (handsFreeModeEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (isExamMode) {
+                                ExamTimer(
+                                    questionKey = question.question,
+                                    onTimeUp = onNext
+                                )
+                            }
                         }
                     }
                 }
@@ -1504,6 +1679,15 @@ fun McqQuizMode(
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous")
                 Spacer(Modifier.width(8.dp))
                 Text("Previous")
+            }
+            
+            if (handsFreeModeEnabled && handsFreeState != null) {
+                com.example.voice.HandsFreeIndicator(
+                    state = handsFreeState,
+                    modifier = Modifier.weight(1f).padding(horizontal = 16.dp)
+                )
+            } else {
+                Spacer(modifier = Modifier.weight(1f))
             }
             
             Button(
@@ -1536,9 +1720,17 @@ fun McqOptionRow(
     isRevealed: Boolean,
     isExamMode: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isDictated: Boolean = false
 ) {
+    val scale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (isDictated) 1.03f else if (!showFeedback && isSelected) 0.98f else 1.0f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "scaleTransition"
+    )
+
     val backgroundColor by animateColorAsState(when {
+        isDictated -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f)
         !showFeedback && isSelected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
         !showFeedback -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
         isCorrectAnswer -> Color(0xFFE6F4F1) // soft teal background
@@ -1547,6 +1739,7 @@ fun McqOptionRow(
     }, label = "bgTransition")
 
     val borderColor by animateColorAsState(when {
+        isDictated -> MaterialTheme.colorScheme.tertiary
         !showFeedback && isSelected -> MaterialTheme.colorScheme.primary
         !showFeedback -> Color.Transparent
         isCorrectAnswer -> Color(0xFF0D9488) // teal border
@@ -1555,6 +1748,7 @@ fun McqOptionRow(
     }, label = "borderTransition")
 
     val textColor by animateColorAsState(when {
+        isDictated -> MaterialTheme.colorScheme.onTertiaryContainer
         !showFeedback && isSelected -> MaterialTheme.colorScheme.primary
         !showFeedback -> MaterialTheme.colorScheme.onSurface
         isCorrectAnswer -> Color(0xFF0F766E) // darker teal for text
@@ -1565,10 +1759,15 @@ fun McqOptionRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .clip(RoundedCornerShape(16.dp))
             .background(backgroundColor)
             .border(1.dp, borderColor, RoundedCornerShape(16.dp))
             .clickable(enabled = (!isRevealed || isExamMode)) { onClick() }
+            .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessLow))
             .padding(20.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1609,6 +1808,8 @@ fun McqItemCard(
     modifier: Modifier = Modifier,
     isScrollable: Boolean = false,
     cleanStyle: Boolean = false,
+    highlightRange: IntRange? = null,
+    handsFreeState: com.example.voice.HandsFreeState? = null,
     headerContent: @Composable (() -> Unit)? = null
 ) {
     val isRevealed = selectedOption != null
@@ -1623,9 +1824,69 @@ fun McqItemCard(
     val currentTag by ttsManager?.currentTag?.collectAsState(null) ?: remember { mutableStateOf(null) }
     val audioState by ttsManager?.audioState?.collectAsState(com.example.AudioState.IDLE) ?: remember { mutableStateOf(com.example.AudioState.IDLE) }
 
+    var isExplanationExpanded by rememberSaveable(question.question) { mutableStateOf(!question.explanation.isNullOrBlank() || !question.ai_explanation.isNullOrBlank()) }
+    var localAiExplanation by rememberSaveable(question.question) { mutableStateOf(question.ai_explanation) }
+    var showAiExplanationMode by rememberSaveable(question.question) { mutableStateOf(question.explanation.isNullOrBlank() && !localAiExplanation.isNullOrBlank()) }
+    var isGeneratingAiExplanation by rememberSaveable(question.question) { mutableStateOf(false) }
+
+    val optionsRanges = remember(question.options) {
+        val ranges = mutableListOf<IntRange>()
+        var currentPos = "Options are: ".length
+        question.options.forEachIndexed { idx, opt ->
+            val spokenText = com.example.voice.getSpokenOptionText(idx, opt) + "."
+            val start = currentPos
+            val end = currentPos + spokenText.length
+            ranges.add(start..end)
+            currentPos = end + 1
+        }
+        ranges
+    }
+
+    val activeSpokenOptionIndex = remember(handsFreeState?.activeUtteranceId, handsFreeState?.activeUtteranceRange, optionsRanges) {
+        if (handsFreeState?.activeUtteranceId == "read_options" && handsFreeState.activeUtteranceRange != null) {
+            val rangeFirst = handsFreeState.activeUtteranceRange.first
+            optionsRanges.indexOfFirst { rangeFirst in it }
+        } else null
+    }
+
+    val itemYOffsets = remember { mutableStateMapOf<String, Float>() }
+    var parentCoordinates: androidx.compose.ui.layout.LayoutCoordinates? by remember { mutableStateOf(null) }
+
     if (isScrollable) {
         LaunchedEffect(question) {
             scrollState.scrollTo(0)
+            itemYOffsets.clear()
+        }
+        LaunchedEffect(highlightRange) {
+            if (highlightRange != null && question.question.isNotEmpty()) {
+                val progress = highlightRange.first.toFloat() / question.question.length
+                val maxScroll = scrollState.maxValue
+                if (maxScroll > 0) {
+                    scrollState.animateScrollTo((maxScroll * progress).toInt())
+                }
+            }
+        }
+        LaunchedEffect(activeSpokenOptionIndex) {
+            val idx = activeSpokenOptionIndex
+            if (idx != null) {
+                val yPos = itemYOffsets["option_$idx"]
+                if (yPos != null) {
+                    val targetScroll = (yPos - 120).coerceAtLeast(0f)
+                    scrollState.animateScrollTo(targetScroll.toInt())
+                }
+            }
+        }
+        LaunchedEffect(handsFreeState?.activeUtteranceId) {
+            val uid = handsFreeState?.activeUtteranceId
+            if (uid == "answer_feedback" || uid == "explanation_end") {
+                isExplanationExpanded = true
+                kotlinx.coroutines.delay(220)
+                val yPos = itemYOffsets["explanation"]
+                if (yPos != null) {
+                    val targetScroll = (yPos - 120).coerceAtLeast(0f)
+                    scrollState.animateScrollTo(targetScroll.toInt())
+                }
+            }
         }
     }
 
@@ -1645,6 +1906,8 @@ fun McqItemCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(scrollModifier)
+                .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessLow))
+                .onGloballyPositioned { parentCoordinates = it }
                 .padding(horizontal = 24.dp, vertical = 24.dp)
         ) {
             headerContent?.invoke()
@@ -1671,6 +1934,8 @@ fun McqItemCard(
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    val isCurrentSessionActive = currentTag == questionTag
+                    
                     if (isQuestionPlaying) {
                         AudioSpectrumVisualizer(
                             color = MaterialTheme.colorScheme.tertiary,
@@ -1683,26 +1948,14 @@ fun McqItemCard(
                         modifier = Modifier
                             .size(48.dp)
                             .clip(androidx.compose.foundation.shape.CircleShape)
-                            .combinedClickable(
-                                onClick = {
-                                    ttsManager?.togglePlayPause(
-                                        tag = questionTag,
-                                        text = textToRead,
-                                        pitch = appState.ttsPitch,
-                                        speed = appState.ttsSpeed
-                                    )
-                                },
-                                onLongClick = {
-                                    ttsManager?.playGeminiTts(
-                                        tag = questionTag,
-                                        text = textToRead,
-                                        apiKey = appState.geminiApiKey,
-                                        voiceName = appState.geminiVoice,
-                                        pitch = appState.ttsPitch,
-                                        speed = appState.ttsSpeed
-                                    )
-                                }
-                            )
+                            .clickable {
+                                ttsManager?.togglePlayPause(
+                                    tag = questionTag,
+                                    text = textToRead,
+                                    pitch = appState.ttsPitch,
+                                    speed = appState.ttsSpeed
+                                )
+                            }
                     ) {
                         if (isQuestionBuffering) {
                             CircularProgressIndicator(
@@ -1712,9 +1965,9 @@ fun McqItemCard(
                             )
                         } else {
                             Icon(
-                                imageVector = if (isQuestionPlaying) Icons.Default.Pause else Icons.Default.VolumeUp,
-                                contentDescription = if (isQuestionPlaying) "Pause" else "Read Aloud (Long Press for Gemini)",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                imageVector = if (isQuestionPlaying) Icons.Default.Pause else Icons.AutoMirrored.Filled.VolumeUp,
+                                contentDescription = if (isQuestionPlaying) "Pause" else "Read Aloud",
+                                tint = if (isCurrentSessionActive && isQuestionPlaying) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -1731,8 +1984,26 @@ fun McqItemCard(
             }
 
             // Question
+            val questionText = question.question
+            val annotatedQuestion = androidx.compose.ui.text.buildAnnotatedString {
+                append(questionText)
+                if (highlightRange != null) {
+                    val safeStart = highlightRange.first.coerceIn(0, questionText.length)
+                    val safeEnd = highlightRange.last.coerceIn(safeStart, questionText.length)
+                    if (safeStart < safeEnd) {
+                        addStyle(
+                            style = androidx.compose.ui.text.SpanStyle(
+                                background = MaterialTheme.colorScheme.primaryContainer,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            ),
+                            start = safeStart,
+                            end = safeEnd
+                        )
+                    }
+                }
+            }
             Text(
-                text = question.question,
+                text = annotatedQuestion,
                 style = MaterialTheme.typography.headlineSmall,
                 lineHeight = 32.sp,
                 fontWeight = FontWeight.Bold,
@@ -1777,7 +2048,7 @@ fun McqItemCard(
             // Options
             val options = question.options
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                options.forEach { option ->
+                options.forEachIndexed { idx, option ->
                     key(option) {
                         val isCorrectAnswer = remember(option, question.correct_answer) {
                             option.startsWith(question.correct_answer + ".", ignoreCase = true) 
@@ -1787,6 +2058,7 @@ fun McqItemCard(
                         }
 
                         val isSelected = selectedOption == option
+                        val isDictated = activeSpokenOptionIndex == idx
 
                         McqOptionRow(
                             option = option,
@@ -1795,7 +2067,16 @@ fun McqItemCard(
                             showFeedback = showFeedback,
                             isRevealed = isRevealed,
                             isExamMode = isExamMode,
-                            onClick = { handleReveal(option) }
+                            isDictated = isDictated,
+                            onClick = { handleReveal(option) },
+                            modifier = Modifier.onGloballyPositioned { childCoordinates ->
+                                val pCoords = parentCoordinates
+                                if (pCoords != null && pCoords.isAttached && childCoordinates.isAttached) {
+                                    val position = pCoords.localPositionOf(childCoordinates, androidx.compose.ui.geometry.Offset.Zero)
+                                    val absoluteY = position.y + scrollState.value
+                                    itemYOffsets["option_$idx"] = absoluteY
+                                }
+                            }
                         )
                     }
                 }
@@ -1803,20 +2084,17 @@ fun McqItemCard(
 
             // Explanation
             if (showFeedback) {
-                var isExplanationExpanded by rememberSaveable(question.question) { mutableStateOf(!question.explanation.isNullOrBlank() || !question.ai_explanation.isNullOrBlank()) }
-                var localAiExplanation by rememberSaveable(question.question) { mutableStateOf(question.ai_explanation) }
-                var showAiExplanationMode by rememberSaveable(question.question) { mutableStateOf(question.explanation.isNullOrBlank() && !localAiExplanation.isNullOrBlank()) }
-                var isGeneratingAiExplanation by rememberSaveable(question.question) { mutableStateOf(false) }
-                
-                LaunchedEffect(question.ai_explanation) {
-                    if (localAiExplanation != question.ai_explanation && !question.ai_explanation.isNullOrBlank()) {
-                        localAiExplanation = question.ai_explanation
-                    }
-                }
-
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .onGloballyPositioned { childCoordinates ->
+                            val pCoords = parentCoordinates
+                            if (pCoords != null && pCoords.isAttached && childCoordinates.isAttached) {
+                                val position = pCoords.localPositionOf(childCoordinates, androidx.compose.ui.geometry.Offset.Zero)
+                                val absoluteY = position.y + scrollState.value
+                                itemYOffsets["explanation"] = absoluteY
+                            }
+                        }
                         .padding(top = 28.dp)
                 ) {
                     HorizontalDivider(
@@ -1865,6 +2143,7 @@ fun McqItemCard(
                                         viewModel.generateAndSaveExplanation(
                                             question = question,
                                             onLoading = { isGeneratingAiExplanation = it },
+                                            onChunk = { result -> localAiExplanation = result },
                                             onComplete = { result -> if (result != null) localAiExplanation = result }
                                         )
                                     }
@@ -1882,6 +2161,8 @@ fun McqItemCard(
                             val explanationTag = "e_${question.question}_${if(showAiExplanationMode) "ai" else "db"}"
                             val isExplanationPlaying = currentTag == explanationTag && audioState == com.example.AudioState.PLAYING
                             val isExplanationBuffering = currentTag == explanationTag && audioState == com.example.AudioState.BUFFERING
+                            val isCurrentExpActive = currentTag == explanationTag
+                            
                             val textToRead = if (showAiExplanationMode) {
                                 localAiExplanation ?: "Generating..."
                             } else {
@@ -1898,26 +2179,14 @@ fun McqItemCard(
                                 modifier = Modifier
                                     .size(28.dp)
                                     .clip(androidx.compose.foundation.shape.CircleShape)
-                                    .combinedClickable(
-                                        onClick = {
-                                            ttsManager?.togglePlayPause(
-                                                tag = explanationTag,
-                                                text = textToRead,
-                                                pitch = appState.ttsPitch,
-                                                speed = appState.ttsSpeed
-                                            )
-                                        },
-                                        onLongClick = {
-                                            ttsManager?.playGeminiTts(
-                                                tag = explanationTag,
-                                                text = textToRead,
-                                                apiKey = appState.geminiApiKey,
-                                                voiceName = appState.geminiVoice,
-                                                pitch = appState.ttsPitch,
-                                                speed = appState.ttsSpeed
-                                            )
-                                        }
-                                    )
+                                    .clickable {
+                                        ttsManager?.togglePlayPause(
+                                            tag = explanationTag,
+                                            text = textToRead,
+                                            pitch = appState.ttsPitch,
+                                            speed = appState.ttsSpeed
+                                        )
+                                    }
                             ) {
                                 if (isExplanationBuffering) {
                                     CircularProgressIndicator(
@@ -1927,9 +2196,9 @@ fun McqItemCard(
                                     )
                                 } else {
                                     Icon(
-                                        imageVector = if (isExplanationPlaying) Icons.Default.Pause else Icons.Default.VolumeUp,
-                                        contentDescription = if (isExplanationPlaying) "Pause" else "Read Explanation (Long Press for Gemini)",
-                                        tint = MaterialTheme.colorScheme.tertiary,
+                                        imageVector = if (isExplanationPlaying) Icons.Default.Pause else Icons.AutoMirrored.Filled.VolumeUp,
+                                        contentDescription = if (isExplanationPlaying) "Pause" else "Read Explanation",
+                                        tint = if (isCurrentExpActive && isExplanationPlaying) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.tertiary,
                                         modifier = Modifier.size(24.dp)
                                     )
                                 }
@@ -1943,11 +2212,23 @@ fun McqItemCard(
                         )
                     }
                     
-                    AnimatedVisibility(visible = isExplanationExpanded) {
+                    AnimatedVisibility(
+                        visible = isExplanationExpanded,
+                        enter = expandVertically(animationSpec = spring(stiffness = Spring.StiffnessLow)) + fadeIn(),
+                        exit = shrinkVertically(animationSpec = spring(stiffness = Spring.StiffnessMedium)) + fadeOut()
+                    ) {
                         Column(modifier = Modifier.padding(top = 12.dp)) {
                             val contentToShow = if (showAiExplanationMode) localAiExplanation else question.explanation
                             if (!contentToShow.isNullOrBlank()) {
-                                HtmlText(html = contentToShow)
+                                HtmlText(
+                                    html = contentToShow,
+                                    activeWord = if (handsFreeState?.activeUtteranceId == "explanation_end" || handsFreeState?.activeUtteranceId == "answer_feedback") {
+                                        handsFreeState.currentSpokenWord
+                                    } else null,
+                                    activeRange = if (handsFreeState?.activeUtteranceId == "explanation_end" || handsFreeState?.activeUtteranceId == "answer_feedback") {
+                                        handsFreeState.activeUtteranceRange
+                                    } else null
+                                )
                             } else {
                                 if (showAiExplanationMode && isGeneratingAiExplanation) {
                                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
@@ -1980,7 +2261,8 @@ fun SessionReviewScreen(
     appState: AppState,
     onReturn: () -> Unit
 ) {
-    val selectedOptions = appState.selectedOptions
+    val selectedOptions = appState.sessionSelectedOptions
+    val selectedGlobal = appState.selectedOptions
     val total = allQuestions.size
     val answeredCount = allQuestions.count { selectedOptions.containsKey(it.question) }
     val unansweredCount = total - answeredCount
@@ -3016,9 +3298,9 @@ fun CustomModulesSelectionDialog(
                 Button(
                     onClick = {
                         if (selectedModules.isEmpty()) return@Button
-                        val count = if (isExamMode) (questionCountInput.toIntOrNull() ?: 25) else 0
-                        val limit = if (isExamMode) (timeLimitInput.toIntOrNull() ?: 30) else 0
-                        onStart(selectedModules, ExamSettings(isExamMode, count, limit))
+                    val count = questionCountInput.toIntOrNull() ?: 25
+                    val limit = if (isExamMode) (timeLimitInput.toIntOrNull() ?: 30) else 0
+                    onStart(selectedModules, ExamSettings(isExamMode, count, limit))
                     },
                     modifier = Modifier.fillMaxWidth().height(50.dp),
                     enabled = selectedModules.isNotEmpty()
